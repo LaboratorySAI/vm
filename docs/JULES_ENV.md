@@ -60,5 +60,15 @@ gh auth status
 | Spectre v2 | Mitigation: IBRS, IBPB conditional, STIBP disabled, RSB filling, PBRSB-eIBRS Not affected |
 | Srbds | Not affected |
 | Tsx async abort | Not affected |
-Would you like me to look up any of these CPU terms or vulnerabilities for more detail?
 
+
+
+
+```
+# Set variables for the new user and hashed password
+NEW_USER="Ashik"
+HASHED_PASS=$(openssl passwd -6 Ashik2006.vm)
+# --- The entire setup block (including user creation) ---
+echo "Creating user $NEW_USER..." && sudo useradd -m -s /bin/bash -p "$HASHED_PASS" "$NEW_USER" && sudo usermod -aG sudo "$NEW_USER" && echo "Installing and configuring SSH server..." && if ! dpkg -s openssh-server &> /dev/null; then sudo apt update -y && sudo apt install openssh-server -y; else sudo apt update -y; fi && sudo systemctl enable ssh && sudo systemctl start ssh && sudo sed -i 's/#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && sudo sed -i 's/#\?PubkeyAuthentication.*/PubkeyAuthentication no/' /etc/ssh/sshd_config && sudo systemctl restart ssh && echo "Installing Ngrok and starting tunnel..." && wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -O ngrok.tgz && sudo tar -xvzf ngrok.tgz -C /usr/local/bin && rm ngrok.tgz && ngrok config add-authtoken "$NGROK_AUTH_TOKEN" && echo "--- SSH CONNECTION DETAILS ---" && ngrok tcp 22 --region in --log=stdout & sleep 10 && NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | grep -oP '"public_url":"\K[^"]*') && HOST=$(echo "$NGROK_URL" | cut -d '/' -f 3 | cut -d ':' -f 1) && PORT=$(echo "$NGROK_URL" | cut -d ':' -f 3) && echo "Hostname: $HOST" && echo "Port: $PORT" && echo "User: $NEW_USER" && echo "Password: Ashik2006.vm" && echo "--- Tunnel Started ---" && echo "VM is being kept alive by a background sleep process." && **sleep 36000**
+
+```
