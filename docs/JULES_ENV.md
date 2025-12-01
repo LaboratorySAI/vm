@@ -65,10 +65,59 @@ gh auth status
 
 
 ```
-# Set variables for the new user and hashed password
-NEW_USER="Ashik"
-HASHED_PASS=$(openssl passwd -6 Ashik2006.vm)
-# --- The entire setup block (including user creation) ---
-echo "Creating user $NEW_USER..." && sudo useradd -m -s /bin/bash -p "$HASHED_PASS" "$NEW_USER" && sudo usermod -aG sudo "$NEW_USER" && echo "Installing and configuring SSH server..." && if ! dpkg -s openssh-server &> /dev/null; then sudo apt update -y && sudo apt install openssh-server -y; else sudo apt update -y; fi && sudo systemctl enable ssh && sudo systemctl start ssh && sudo sed -i 's/#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && sudo sed -i 's/#\?PubkeyAuthentication.*/PubkeyAuthentication no/' /etc/ssh/sshd_config && sudo systemctl restart ssh && echo "Installing Ngrok and starting tunnel..." && wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -O ngrok.tgz && sudo tar -xvzf ngrok.tgz -C /usr/local/bin && rm ngrok.tgz && ngrok config add-authtoken "$NGROK_AUTH_TOKEN" && echo "--- SSH CONNECTION DETAILS ---" && ngrok tcp 22 --region in --log=stdout & sleep 10 && NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | grep -oP '"public_url":"\K[^"]*') && HOST=$(echo "$NGROK_URL" | cut -d '/' -f 3 | cut -d ':' -f 1) && PORT=$(echo "$NGROK_URL" | cut -d ':' -f 3) && echo "Hostname: $HOST" && echo "Port: $PORT" && echo "User: $NEW_USER" && echo "Password: Ashik2006.vm" && echo "--- Tunnel Started ---" && echo "VM is being kept alive by a background sleep process." && **sleep 36000**
+# Calculate HASHED_PASS from the environment variable VM_PW
+HASHED_PASS=$(openssl passwd -6 "$VM_PW") &&
+
+# --- User Creation and SSH Setup ---
+echo "Creating user $VM_USERNAME..." &&
+sudo useradd -m -s /bin/bash -p "$HASHED_PASS" "$VM_USERNAME" &&
+sudo usermod -aG sudo "$VM_USERNAME" &&
+echo "Installing and configuring SSH server..." &&
+if ! dpkg -s openssh-server &> /dev/null; then
+  sudo apt update -y && sudo apt install openssh-server -y;
+else
+  sudo apt update -y;
+fi &&
+sudo systemctl enable ssh &&
+sudo systemctl start ssh &&
+sudo sed -i 's/#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config &&
+sudo sed -i 's/#\?PubkeyAuthentication.*/PubkeyAuthentication no/' /etc/ssh/sshd_config &&
+sudo systemctl restart ssh &&
+
+# --- Software Installation: Git, GitHub CLI, and Kiro CLI ---
+echo "Installing Git, GitHub CLI, and Kiro CLI..." &&
+sudo apt install git -y &&
+# Setup and install GitHub CLI (gh)
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg &&
+sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg &&
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null &&
+sudo apt update -y &&
+sudo apt install gh -y &&
+# Setup and install Kiro CLI (kiro)
+sudo mkdir -p /etc/apt/keyrings &&
+curl -sSfL https://kiro.io/keys/deb-repo.asc | sudo tee /etc/apt/keyrings/kiro-io-archive-keyring.asc >/dev/null &&
+echo "deb [signed-by=/etc/apt/keyrings/kiro-io-archive-keyring.asc] https://repo.kiro.io/deb stable main" | sudo tee /etc/apt/sources.list.d/kiro-io.list >/dev/null &&
+sudo apt update -y &&
+sudo apt install kiro -y &&
+
+# --- Ngrok Setup, Tunnel, and Connection Details ---
+echo "Installing Ngrok and starting tunnel..." &&
+wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -O ngrok.tgz &&
+sudo tar -xvzf ngrok.tgz -C /usr/local/bin &&
+rm ngrok.tgz &&
+ngrok config add-authtoken "$NGROK_AUTH_TOKEN" &&
+echo "--- SSH CONNECTION DETAILS ---" &&
+ngrok tcp 22 --region in --log=stdout & sleep 10 &&
+NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | grep -oP '"public_url":"\K[^"]*') &&
+HOST=$(echo "$NGROK_URL" | cut -d '/' -f 3 | cut -d ':' -f 1) &&
+PORT=$(echo "$NGROK_URL" | cut -d ':' -f 3) &&
+echo "Hostname: $HOST" &&
+echo "Port: $PORT" &&
+echo "User: $VM_USERNAME" &&
+echo "Password: $VM_PW" &&
+echo "--- Tunnel Started ---" &&
+echo "VM is being kept alive by a background sleep process." &&
+sleep 36000
+
 
 ```
