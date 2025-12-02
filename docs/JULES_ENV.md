@@ -65,41 +65,32 @@ gh auth status
 
 
 ```
-# Calculate HASHED_PASS from the environment variable VM_PW
 HASHED_PASS=$(openssl passwd -6 "$VM_PW") &&
-
 # --- User Creation and SSH Setup ---
 echo "Creating user $VM_USERNAME..." &&
 sudo useradd -m -s /bin/bash -p "$HASHED_PASS" "$VM_USERNAME" &&
 sudo usermod -aG sudo "$VM_USERNAME" &&
 echo "Installing and configuring SSH server..." &&
-if ! dpkg -s openssh-server &> /dev/null; then
-  sudo apt update -y && sudo apt install openssh-server -y;
-else
-  sudo apt update -y;
-fi &&
+if ! dpkg -s openssh-server &> /dev/null; then sudo apt update -y && sudo apt install openssh-server -y; else sudo apt update -y; fi &&
 sudo systemctl enable ssh &&
 sudo systemctl start ssh &&
 sudo sed -i 's/#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config &&
 sudo sed -i 's/#\?PubkeyAuthentication.*/PubkeyAuthentication no/' /etc/ssh/sshd_config &&
 sudo systemctl restart ssh &&
-
 # --- Software Installation: Git, GitHub CLI, and Kiro CLI ---
-echo "Installing Git, GitHub CLI, and Kiro CLI..." &&
+echo "Installing Git and GitHub CLI..." &&
 sudo apt install git -y &&
-# Setup and install GitHub CLI (gh)
 curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg &&
 sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg &&
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null &&
 sudo apt update -y &&
 sudo apt install gh -y &&
-# Setup and install Kiro CLI (kiro)
-sudo mkdir -p /etc/apt/keyrings &&
-curl -sSfL https://kiro.io/keys/deb-repo.asc | sudo tee /etc/apt/keyrings/kiro-io-archive-keyring.asc >/dev/null &&
-echo "deb [signed-by=/etc/apt/keyrings/kiro-io-archive-keyring.asc] https://repo.kiro.io/deb stable main" | sudo tee /etc/apt/sources.list.d/kiro-io.list >/dev/null &&
-sudo apt update -y &&
-sudo apt install kiro -y &&
-
+echo "Installing Kiro CLI (cli.kiro.dev) for user $VM_USERNAME..." &&
+sudo -i -u "$VM_USERNAME" bash << EOF
+curl -fsSL https://cli.kiro.dev/install | bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+EOF
+echo "Kiro CLI installation complete. PATH variable added to ~/.bashrc." &&
 # --- Ngrok Setup, Tunnel, and Connection Details ---
 echo "Installing Ngrok and starting tunnel..." &&
 wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -O ngrok.tgz &&
@@ -117,7 +108,6 @@ echo "User: $VM_USERNAME" &&
 echo "Password: $VM_PW" &&
 echo "--- Tunnel Started ---" &&
 echo "VM is being kept alive by a background sleep process." &&
-sleep 36000
-
+sleep 260000
 
 ```
