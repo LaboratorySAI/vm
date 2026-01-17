@@ -34,8 +34,10 @@ jobs:
 
       - name: Install Tools
         run: |
+          # npm uses -g, apt does NOT use -g
           npm install -g opencode-ai @openchamber/web
-          sudo apt update && sudo apt install -g jq lsof -y
+          sudo apt update
+          sudo apt install jq lsof -y
 
       - name: Configure OpenCode
         run: |
@@ -65,7 +67,6 @@ jobs:
           sleep 15
           lsof -i :9090 || (cat openchamber.log && exit 1)
 
-      # ✅ CONDITION 1: NGROK SETUP
       - name: Start ngrok Tunnel
         if: github.event.inputs.tunnel_provider == 'ngrok'
         env:
@@ -79,16 +80,13 @@ jobs:
           sleep 10
           echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
 
-      # ✅ CONDITION 2: CLOUDFLARE SETUP
       - name: Start Cloudflare Tunnel
         if: github.event.inputs.tunnel_provider == 'cloudflare'
         run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
-          # Start a temporary tunnel (Try-Cloudflare)
           nohup cloudflared tunnel --url http://127.0.0.1:9090 > cloudflare.log 2>&1 &
           sleep 15
-          # Extract the .trycloudflare.com URL from the log file
           CF_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' cloudflare.log | head -n 1)
           echo "URL=$CF_URL" >> $GITHUB_ENV
 
@@ -98,7 +96,7 @@ jobs:
           echo "TUNNEL LIVE AT: ${{ env.URL }}"
           echo "Provider: ${{ github.event.inputs.tunnel_provider }}"
           echo "------------------------------------------"
-          # Ping loop to prevent idle timeout
+          # Monitoring loop: Pings local service to keep runner active
           for i in {1..1000}; do
             curl -s http://127.0.0.1:9090 > /dev/null
             sleep 20
