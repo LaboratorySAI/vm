@@ -19,10 +19,10 @@ jobs:
         with:
           node-version: "20"
 
-      # 🔹 Restore creds only if artifact exists
-      - name: Try restore OpenCode creds
-        uses: actions/download-artifact@v4
+      # Restore creds if present (bootstrap-safe)
+      - name: Restore OpenCode creds (if exist)
         continue-on-error: true
+        uses: actions/download-artifact@v4
         with:
           name: opencode-creds
           path: ~/.local/share/opencode/
@@ -68,18 +68,20 @@ jobs:
           nohup openchamber --port 9090 &
           sleep 12
 
-      - name: Start ngrok
+      # ✅ ngrok handled ONLY here
+      - name: Expose via ngrok
         uses: luisboto/ngrok-tunnel-action@v0.1.7.2
         with:
           ngrok_authtoken: ${{ secrets.NGROK_AUTHTOKEN }}
           port: 9090
           tunnel_type: http
           save_url_to_filename: tunnel-url.txt
+          timeout: 1h
 
-      - name: Show URL
+      - name: Show public URL
         run: cat tunnel-url.txt
 
-      - name: Save tunnel URL
+      - name: Save URL
         uses: actions/upload-artifact@v4
         with:
           name: openchamber-url
