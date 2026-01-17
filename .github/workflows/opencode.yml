@@ -34,7 +34,6 @@ jobs:
 
       - name: Install Tools
         run: |
-          # npm uses -g, apt does NOT use -g
           npm install -g opencode-ai @openchamber/web
           sudo apt update
           sudo apt install jq lsof -y
@@ -62,10 +61,19 @@ jobs:
 
       - name: Start Services
         run: |
-          (opencode web --port 8080 > opencode.log 2>&1 &) && disown
-          (openchamber --port 9090 > openchamber.log 2>&1 &) && disown
-          sleep 15
-          lsof -i :9090 || (cat openchamber.log && exit 1)
+          # Use nohup and backgrounding without grouping for better job control
+          nohup opencode web --port 8080 > opencode.log 2>&1 &
+          nohup openchamber --port 9090 > openchamber.log 2>&1 &
+          
+          echo "Waiting for services to boot..."
+          sleep 20
+          
+          # Verify if 9090 is actually listening
+          if ! lsof -i :9090; then
+            echo "ERROR: OpenChamber failed to start on port 9090"
+            cat openchamber.log
+            exit 1
+          fi
 
       - name: Start ngrok Tunnel
         if: github.event.inputs.tunnel_provider == 'ngrok'
@@ -76,7 +84,7 @@ jobs:
           echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
           sudo apt update && sudo apt install ngrok -y
           ngrok config add-authtoken "$NGROK_TOKEN"
-          (ngrok http 127.0.0.1:9090 --log=stdout > ngrok.log 2>&1 &) && disown
+          nohup ngrok http 127.0.0.1:9090 --log=stdout > ngrok.log 2>&1 &
           sleep 10
           echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
 
@@ -96,10 +104,10 @@ jobs:
           echo "TUNNEL LIVE AT: ${{ env.URL }}"
           echo "Provider: ${{ github.event.inputs.tunnel_provider }}"
           echo "------------------------------------------"
-          # Monitoring loop: Pings local service to keep runner active
-          for i in {1..1000}; do
+          # Monitoring loop: Pings local service every 30 seconds to keep runner active
+          while true; do
             curl -s http://127.0.0.1:9090 > /dev/null
-            sleep 20
+            sleep 30
           done
 
       - name: Save OpenCode Session
