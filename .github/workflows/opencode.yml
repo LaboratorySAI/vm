@@ -7,9 +7,6 @@ jobs:
   serve:
     runs-on: ubuntu-latest
 
-    env:
-      OPENCODE_SERVER_PASSWORD: ${{ secrets.OPENCODE_PASSWORD }}
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -58,31 +55,34 @@ jobs:
 
       - name: Start Services
         run: |
+          # Password environment variable removed
           nohup opencode web --port 8080 > opencode.log 2>&1 &
           nohup openchamber --port 9090 > openchamber.log 2>&1 &
           sleep 10
 
       - name: Install and Setup ngrok
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
         run: |
           curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
           echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
           sudo apt update && sudo apt install ngrok
-          ngrok config add-authtoken ${{ secrets.NGROK_AUTHTOKEN }}
+          # This authtoken is required by ngrok to function
+          ngrok config add-authtoken $NGROK_TOKEN
 
       - name: Start ngrok Tunnel
         run: |
           nohup ngrok http 9090 --log=stdout > ngrok.log 2>&1 &
-          sleep 5
-          # Extract the public URL from the ngrok API
-          curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' > tunnel-url.txt
-          echo "Public URL is: $(cat tunnel-url.txt)"
+          sleep 10
+          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          echo "URL=$PUBLIC_URL" >> $GITHUB_ENV
+          echo "Public URL is: $PUBLIC_URL"
 
-      - name: Save URL and Keep Alive
+      - name: Keep Alive
         run: |
-          cat tunnel-url.txt
-          echo "Workflow will keep running for 6 hours. Cancel manually to stop."
-          # This keeps the job from finishing and killing the processes
-          sleep 21600 
+          echo "The tunnel is live at: ${{ env.URL }}"
+          echo "No password is required to access this instance."
+          sleep 21600
 
       - name: Save OpenCode creds
         if: always()
