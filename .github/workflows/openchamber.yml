@@ -1,4 +1,4 @@
-name: OpenChamber + OpenCode (Windows Edition)
+name: OpenChamber WinArm Edition)
 
 on:
   workflow_dispatch:
@@ -27,15 +27,14 @@ jobs:
 
       - name: Install Tools (PowerShell)
         run: |
-          # Install utilities using Chocolatey (Windows Package Manager)
+          # Install utilities using Chocolatey
           choco install jq curl -y --no-progress
           npm install -g opencode-ai @openchamber/web
 
       - name: Configure OpenCode (Windows Pathing)
         run: |
-          # Create directory using PowerShell syntax
           $ConfigDir = "$env:USERPROFILE\.config\opencode"
-          New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
+          if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null }
           
           # Write the JSON config file
           $JsonContent = @'
@@ -78,10 +77,13 @@ jobs:
       - name: Start Services (Windows Background Jobs)
         run: |
           echo "Starting OpenCode..."
-          $opencodeProcess = Start-Process -FilePath "opencode" -ArgumentList "web --port 8080" -PassThru -NoNewWindow -RedirectStandardOutput "opencode.log" -RedirectStandardError "opencode_err.log"
+          # FIX: Use 'cmd.exe /c' to execute the NPM scripts properly on Windows
+          $opencodeArgs = "/c opencode web --port 8080"
+          Start-Process -FilePath "cmd.exe" -ArgumentList $opencodeArgs -PassThru -NoNewWindow -RedirectStandardOutput "opencode.log" -RedirectStandardError "opencode_err.log"
           
           echo "Starting OpenChamber..."
-          $chamberProcess = Start-Process -FilePath "openchamber" -ArgumentList "--port 9090" -PassThru -NoNewWindow -RedirectStandardOutput "openchamber.log" -RedirectStandardError "openchamber_err.log"
+          $chamberArgs = "/c openchamber --port 9090"
+          Start-Process -FilePath "cmd.exe" -ArgumentList $chamberArgs -PassThru -NoNewWindow -RedirectStandardOutput "openchamber.log" -RedirectStandardError "openchamber_err.log"
           
           Start-Sleep -Seconds 20
 
@@ -93,20 +95,26 @@ jobs:
             # Ngrok Setup
             choco install ngrok -y --no-progress
             ngrok config add-authtoken $env:NGROK_TOKEN
+            # Launch ngrok via Start-Process
             Start-Process -FilePath "ngrok" -ArgumentList "http 127.0.0.1:9090 --log=stdout" -PassThru -NoNewWindow -RedirectStandardOutput "tunnel.log"
             Start-Sleep -Seconds 10
             
             # Fetch URL via API
-            $TunnelInfo = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels"
-            $URL = $TunnelInfo.tunnels[0].public_url
-            echo "URL=$URL" >> $env:GITHUB_ENV
+            try {
+                $TunnelInfo = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels"
+                $URL = $TunnelInfo.tunnels[0].public_url
+                echo "URL=$URL" >> $env:GITHUB_ENV
+            } catch {
+                Write-Host "Error fetching ngrok URL. Log content:"
+                Get-Content "tunnel.log"
+            }
           } else {
             # Cloudflare Setup
             choco install cloudflared -y --no-progress
             Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://127.0.0.1:9090" -PassThru -NoNewWindow -RedirectStandardOutput "tunnel.log" -RedirectStandardError "tunnel_err.log"
             Start-Sleep -Seconds 15
             
-            # Extract URL using regex in PowerShell
+            # Extract URL using regex
             $LogContent = Get-Content -Path "tunnel_err.log" -Raw
             if ($LogContent -match 'https://[-a-z0-9.]*trycloudflare.com') {
                $URL = $matches[0]
@@ -128,11 +136,12 @@ jobs:
             $connection = Get-NetTCPConnection -LocalPort 9090 -ErrorAction SilentlyContinue
             if (-not $connection) {
                Write-Host "[$(Get-Date)] !!! CRASH DETECTED !!! Restarting OpenChamber..."
-               Start-Process -FilePath "openchamber" -ArgumentList "--port 9090" -PassThru -NoNewWindow -RedirectStandardOutput "openchamber.log" -RedirectStandardError "openchamber_err.log"
+               # Re-launch using cmd /c wrapper
+               Start-Process -FilePath "cmd.exe" -ArgumentList "/c openchamber --port 9090" -PassThru -NoNewWindow -RedirectStandardOutput "openchamber.log" -RedirectStandardError "openchamber_err.log"
                Start-Sleep -Seconds 10
             }
 
-            # 2. Check Tunnel Process (Self-Heal Tunnel)
+            # 2. Check Tunnel Process
             $tunnelProc = Get-Process -Name "ngrok", "cloudflared" -ErrorAction SilentlyContinue
             if (-not $tunnelProc) {
                Write-Host "[$(Get-Date)] !!! TUNNEL DIED !!! Rehosting..."
@@ -149,9 +158,6 @@ jobs:
                }
                Write-Host "NEW LINK: $NewURL"
             }
-
-            # Keep Alive Ping
-            try { Invoke-WebRequest -Uri "http://127.0.0.1:9090" -Method Head -ErrorAction SilentlyContinue | Out-Null } catch {}
             
             # Print Logs
             if (Test-Path "openchamber.log") { Get-Content "openchamber.log" -Tail 1 }
