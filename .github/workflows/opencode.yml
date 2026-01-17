@@ -1,4 +1,4 @@
-name: Run OpenChamber + OpenCode + Antigravity + ngrok
+name: OpenChamber + OpenCode (Antigravity)
 
 on:
   workflow_dispatch:
@@ -8,28 +8,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-      # Step 1 — Checkout repo
-      - name: Checkout repository
+      # 1️⃣ Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Step 2 — Restore OpenCode credentials (pre-auth)
-      - name: Restore OpenCode Credentials
-        uses: actions/download-artifact@v4
-        with:
-          name: opencode-creds
-          path: ~/.local/share/opencode/
-
-      # Step 3 — Setup Node.js (needed for both OpenCode + OpenChamber)
+      # 2️⃣ Setup Node
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      # Step 4 — Install OpenCode CLI & antigravity plugin
-      - name: Install OpenCode + Antigravity plugin
+      # 3️⃣ Try restoring creds (NON-FAIL)
+      - name: Restore OpenCode credentials (if exists)
+        id: restore-creds
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: opencode-creds
+          path: ~/.local/share/opencode/
+
+      # 4️⃣ Install OpenCode + Antigravity plugin
+      - name: Install OpenCode + Antigravity
         run: |
           npm install -g opencode-ai
-          mkdir -p ~/.config/opencode/
+          mkdir -p ~/.config/opencode
+
           cat << 'EOF' > ~/.config/opencode/opencode.json
           {
             "$schema": "https://opencode.ai/config.json",
@@ -53,24 +56,24 @@ jobs:
           }
           EOF
 
-      # Step 5 — Install OpenChamber Web UI
-      - name: Install OpenChamber Web
+      # 5️⃣ Install OpenChamber
+      - name: Install OpenChamber
         run: |
           npm install -g @openchamber/web
 
-      # Step 6 — Start OpenCode backend
-      - name: Start OpenCode Server
+      # 6️⃣ Start OpenCode backend
+      - name: Start OpenCode
         run: |
           nohup opencode web --port 8080 &
           sleep 12
 
-      # Step 7 — Start OpenChamber UI
-      - name: Start OpenChamber Server
+      # 7️⃣ Start OpenChamber UI
+      - name: Start OpenChamber
         run: |
           nohup openchamber --port 9090 &
           sleep 12
 
-      # Step 8 — Start ngrok tunnel
+      # 8️⃣ Expose with ngrok
       - name: Start ngrok
         uses: luisboto/ngrok-tunnel-action@v0.1.7.2
         with:
@@ -79,19 +82,22 @@ jobs:
           tunnel_type: http
           save_url_to_filename: tunnel-url.txt
 
-      # Step 9 — Output and save the public URL
+      # 9️⃣ Show URL
       - name: Show public URL
         run: cat tunnel-url.txt
 
-      - name: Upload ngrok URL
+      # 🔟 Save URL artifact
+      - name: Save tunnel URL
         uses: actions/upload-artifact@v4
         with:
-          name: openchamber-tunnel
+          name: openchamber-url
           path: tunnel-url.txt
 
-      # Step 10 — Save updated OpenCode credentials for next run
-      - name: Save OpenCode Credentials
+      # 1️⃣1️⃣ Save creds (ALWAYS)
+      - name: Save OpenCode credentials
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: opencode-creds
           path: ~/.local/share/opencode/
+          retention-days: 30
