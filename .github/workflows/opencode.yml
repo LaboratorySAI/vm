@@ -55,27 +55,28 @@ jobs:
 
       - name: Start Services
         run: |
-          nohup opencode web --port 8080 > opencode.log 2>&1 &
-          nohup openchamber --port 9090 > openchamber.log 2>&1 &
-          sleep 10
+          # Use 0.0.0.0 to ensure accessibility across IPv4 and IPv6 loops
+          nohup opencode web --port 8080 --host 0.0.0.0 > opencode.log 2>&1 &
+          nohup openchamber --port 9090 --host 0.0.0.0 > openchamber.log 2>&1 &
+          
+          echo "Waiting for OpenChamber to boot on port 9090..."
+          timeout 60s bash -c 'until printf "" 2>>/dev/null >>/dev/tcp/127.0.0.1/9090; do sleep 2; done' || (cat openchamber.log && exit 1)
+          echo "OpenChamber is UP."
 
       - name: Setup ngrok
         env:
           NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          # Download and install ngrok via official script for speed
           curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
           echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
           sudo apt update && sudo apt install ngrok -y
-          
-          # Configure the token using your specific secret name
           ngrok config add-authtoken "$NGROK_TOKEN"
 
       - name: Start ngrok Tunnel
         run: |
-          nohup ngrok http 9090 --log=stdout > ngrok.log 2>&1 &
+          # Force ngrok to use IPv4 localhost to avoid the [::1] error seen in your screenshot
+          nohup ngrok http 127.0.0.1:9090 --log=stdout > ngrok.log 2>&1 &
           sleep 10
-          # Fetch and store the URL
           PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
           echo "URL=$PUBLIC_URL" >> $GITHUB_ENV
           echo "------------------------------------------"
@@ -85,7 +86,6 @@ jobs:
       - name: Keep Alive (6 Hours)
         run: |
           echo "Public URL: ${{ env.URL }}"
-          echo "Workflow keeping alive. Cancel run to stop."
           sleep 21600
 
       - name: Save OpenCode creds
