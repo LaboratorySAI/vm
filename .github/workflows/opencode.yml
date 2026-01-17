@@ -2,6 +2,15 @@ name: OpenChamber + OpenCode (Antigravity)
 
 on:
   workflow_dispatch:
+    inputs:
+      tunnel_provider:
+        description: 'Select Tunnel Provider'
+        required: true
+        default: 'ngrok'
+        type: choice
+        options:
+          - ngrok
+          - cloudflare
 
 jobs:
   serve:
@@ -23,9 +32,13 @@ jobs:
           name: opencode-creds
           path: /home/runner/.local/share/opencode/
 
-      - name: Install OpenCode + Antigravity
+      - name: Install Tools
         run: |
-          npm install -g opencode-ai
+          npm install -g opencode-ai @openchamber/web
+          sudo apt update && sudo apt install -g jq lsof -y
+
+      - name: Configure OpenCode
+        run: |
           mkdir -p ~/.config/opencode
           cat << 'EOF' > ~/.config/opencode/opencode.json
           {
@@ -34,11 +47,6 @@ jobs:
             "provider": {
               "google": {
                 "models": {
-                  "antigravity-gemini-3-pro-low": {
-                    "name": "Gemini 3 Pro Low (Antigravity)",
-                    "limit": { "context": 1048576, "output": 65535 },
-                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
-                  },
                   "antigravity-gemini-3-pro-high": {
                     "name": "Gemini 3 Pro High (Antigravity)",
                     "limit": { "context": 1048576, "output": 65535 },
@@ -50,31 +58,16 @@ jobs:
           }
           EOF
 
-      - name: Install OpenChamber
-        run: npm install -g @openchamber/web
-
       - name: Start Services
         run: |
-          # Removed the --host flag which caused the crash. 
-          # Most Node apps use the HOST env variable instead.
-          export HOST=0.0.0.0
-          nohup opencode web --port 8080 > opencode.log 2>&1 &
-          nohup openchamber --port 9090 > openchamber.log 2>&1 &
-          
-          echo "Waiting for services to boot..."
-          # Increased sleep to give the background processes more time
+          (opencode web --port 8080 > opencode.log 2>&1 &) && disown
+          (openchamber --port 9090 > openchamber.log 2>&1 &) && disown
           sleep 15
-          
-          # Simplified health check
-          if lsof -Pi :9090 -sTCP:LISTEN -t >/dev/null ; then
-              echo "OpenChamber is UP on port 9090."
-          else
-              echo "OpenChamber failed to start. Logs below:"
-              cat openchamber.log
-              exit 1
-          fi
+          lsof -i :9090 || (cat openchamber.log && exit 1)
 
-      - name: Setup ngrok
+      # ✅ CONDITION 1: NGROK SETUP
+      - name: Start ngrok Tunnel
+        if: github.event.inputs.tunnel_provider == 'ngrok'
         env:
           NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
@@ -82,22 +75,34 @@ jobs:
           echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
           sudo apt update && sudo apt install ngrok -y
           ngrok config add-authtoken "$NGROK_TOKEN"
-
-      - name: Start ngrok Tunnel
-        run: |
-          # Use 127.0.0.1 explicitly to bypass IPv6 loopback issues
-          nohup ngrok http 127.0.0.1:9090 --log=stdout > ngrok.log 2>&1 &
+          (ngrok http 127.0.0.1:9090 --log=stdout > ngrok.log 2>&1 &) && disown
           sleep 10
-          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          echo "URL=$PUBLIC_URL" >> $GITHUB_ENV
-          echo "------------------------------------------"
-          echo "TUNNEL LIVE AT: $PUBLIC_URL"
-          echo "------------------------------------------"
+          echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
 
-      - name: Keep Alive (6 Hours)
+      # ✅ CONDITION 2: CLOUDFLARE SETUP
+      - name: Start Cloudflare Tunnel
+        if: github.event.inputs.tunnel_provider == 'cloudflare'
         run: |
-          echo "Public URL: ${{ env.URL }}"
-          sleep 21600
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+          # Start a temporary tunnel (Try-Cloudflare)
+          nohup cloudflared tunnel --url http://127.0.0.1:9090 > cloudflare.log 2>&1 &
+          sleep 15
+          # Extract the .trycloudflare.com URL from the log file
+          CF_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' cloudflare.log | head -n 1)
+          echo "URL=$CF_URL" >> $GITHUB_ENV
+
+      - name: Keep Alive & Monitor
+        run: |
+          echo "------------------------------------------"
+          echo "TUNNEL LIVE AT: ${{ env.URL }}"
+          echo "Provider: ${{ github.event.inputs.tunnel_provider }}"
+          echo "------------------------------------------"
+          # Ping loop to prevent idle timeout
+          for i in {1..1000}; do
+            curl -s http://127.0.0.1:9090 > /dev/null
+            sleep 20
+          done
 
       - name: Save OpenCode Session
         if: always()
