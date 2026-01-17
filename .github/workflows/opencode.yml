@@ -16,12 +16,12 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Restore OpenCode creds (if exist)
+      - name: Restore OpenCode Session
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: opencode-creds
-          path: ~/.local/share/opencode/
+          path: /home/runner/.local/share/opencode/
 
       - name: Install OpenCode + Antigravity
         run: |
@@ -55,13 +55,24 @@ jobs:
 
       - name: Start Services
         run: |
-          # Use 0.0.0.0 to ensure accessibility across IPv4 and IPv6 loops
-          nohup opencode web --port 8080 --host 0.0.0.0 > opencode.log 2>&1 &
-          nohup openchamber --port 9090 --host 0.0.0.0 > openchamber.log 2>&1 &
+          # Removed the --host flag which caused the crash. 
+          # Most Node apps use the HOST env variable instead.
+          export HOST=0.0.0.0
+          nohup opencode web --port 8080 > opencode.log 2>&1 &
+          nohup openchamber --port 9090 > openchamber.log 2>&1 &
           
-          echo "Waiting for OpenChamber to boot on port 9090..."
-          timeout 60s bash -c 'until printf "" 2>>/dev/null >>/dev/tcp/127.0.0.1/9090; do sleep 2; done' || (cat openchamber.log && exit 1)
-          echo "OpenChamber is UP."
+          echo "Waiting for services to boot..."
+          # Increased sleep to give the background processes more time
+          sleep 15
+          
+          # Simplified health check
+          if lsof -Pi :9090 -sTCP:LISTEN -t >/dev/null ; then
+              echo "OpenChamber is UP on port 9090."
+          else
+              echo "OpenChamber failed to start. Logs below:"
+              cat openchamber.log
+              exit 1
+          fi
 
       - name: Setup ngrok
         env:
@@ -74,7 +85,7 @@ jobs:
 
       - name: Start ngrok Tunnel
         run: |
-          # Force ngrok to use IPv4 localhost to avoid the [::1] error seen in your screenshot
+          # Use 127.0.0.1 explicitly to bypass IPv6 loopback issues
           nohup ngrok http 127.0.0.1:9090 --log=stdout > ngrok.log 2>&1 &
           sleep 10
           PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
@@ -88,10 +99,10 @@ jobs:
           echo "Public URL: ${{ env.URL }}"
           sleep 21600
 
-      - name: Save OpenCode creds
+      - name: Save OpenCode Session
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: opencode-creds
-          path: ~/.local/share/opencode/
+          path: /home/runner/.local/share/opencode/
           retention-days: 30
