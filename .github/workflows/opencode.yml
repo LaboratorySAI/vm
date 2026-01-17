@@ -55,33 +55,37 @@ jobs:
 
       - name: Start Services
         run: |
-          # Password environment variable removed
           nohup opencode web --port 8080 > opencode.log 2>&1 &
           nohup openchamber --port 9090 > openchamber.log 2>&1 &
           sleep 10
 
-      - name: Install and Setup ngrok
+      - name: Setup ngrok
         env:
-          NGROK_TOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
+          # Download and install ngrok via official script for speed
           curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
           echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-          sudo apt update && sudo apt install ngrok
-          # This authtoken is required by ngrok to function
-          ngrok config add-authtoken $NGROK_TOKEN
+          sudo apt update && sudo apt install ngrok -y
+          
+          # Configure the token using your specific secret name
+          ngrok config add-authtoken "$NGROK_TOKEN"
 
       - name: Start ngrok Tunnel
         run: |
           nohup ngrok http 9090 --log=stdout > ngrok.log 2>&1 &
           sleep 10
+          # Fetch and store the URL
           PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
           echo "URL=$PUBLIC_URL" >> $GITHUB_ENV
-          echo "Public URL is: $PUBLIC_URL"
+          echo "------------------------------------------"
+          echo "TUNNEL LIVE AT: $PUBLIC_URL"
+          echo "------------------------------------------"
 
-      - name: Keep Alive
+      - name: Keep Alive (6 Hours)
         run: |
-          echo "The tunnel is live at: ${{ env.URL }}"
-          echo "No password is required to access this instance."
+          echo "Public URL: ${{ env.URL }}"
+          echo "Workflow keeping alive. Cancel run to stop."
           sleep 21600
 
       - name: Save OpenCode creds
