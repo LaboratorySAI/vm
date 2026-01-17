@@ -27,13 +27,15 @@ jobs:
 
       - name: Install Tools
         run: |
+          # coreutils provides stdbuf
           npm install -g opencode-ai @openchamber/web
           sudo apt update
-          sudo apt install jq lsof stdbuf -y
+          sudo apt install jq lsof coreutils -y 
 
-      - name: Configure OpenCode
+      - name: Configure OpenCode (Antigravity)
         run: |
           mkdir -p ~/.config/opencode
+          # Configured according to opencode-antigravity-auth model definitions
           cat << 'EOF' > ~/.config/opencode/opencode.json
           {
             "$schema": "https://opencode.ai/config.json",
@@ -54,7 +56,7 @@ jobs:
 
       - name: Start Services
         run: |
-          # Use stdbuf to ensure logs are written immediately for debugging
+          # Using stdbuf from coreutils to prevent log buffering
           nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
           nohup stdbuf -oL openchamber --port 9090 > openchamber.log 2>&1 &
           sleep 20
@@ -62,7 +64,6 @@ jobs:
       - name: Start Tunnel
         run: |
           if [[ "${{ github.event.inputs.tunnel_provider }}" == "ngrok" ]]; then
-            # NGROK SETUP
             curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
             echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
             sudo apt update && sudo apt install ngrok -y
@@ -71,7 +72,6 @@ jobs:
             sleep 10
             echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
           else
-            # CLOUDFLARE SETUP
             wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
             sudo dpkg -i cloudflared-linux-amd64.deb
             nohup cloudflared tunnel --url http://127.0.0.1:9090 > cloudflare.log 2>&1 &
@@ -87,15 +87,14 @@ jobs:
           echo "Provider: ${{ github.event.inputs.tunnel_provider }}"
           echo "------------------------------------------"
           
-          # This loop pings every 5 seconds and restarts OpenChamber if it crashes
           while true; do
+            # Emergency check for port 9090
             if ! lsof -i :9090 > /dev/null; then
               echo "!!! CRITICAL: OpenChamber crashed! Restarting..."
               nohup stdbuf -oL openchamber --port 9090 >> openchamber.log 2>&1 &
               sleep 10
             fi
             
-            # Keeps the GitHub console active with real-time logs
             tail -n 1 openchamber.log
             curl -s http://127.0.0.1:9090 > /dev/null
             sleep 5
