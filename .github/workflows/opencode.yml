@@ -19,7 +19,6 @@ jobs:
         with:
           node-version: "20"
 
-      # Restore creds if present (bootstrap-safe)
       - name: Restore OpenCode creds (if exist)
         continue-on-error: true
         uses: actions/download-artifact@v4
@@ -31,7 +30,6 @@ jobs:
         run: |
           npm install -g opencode-ai
           mkdir -p ~/.config/opencode
-
           cat << 'EOF' > ~/.config/opencode/opencode.json
           {
             "$schema": "https://opencode.ai/config.json",
@@ -58,34 +56,33 @@ jobs:
       - name: Install OpenChamber
         run: npm install -g @openchamber/web
 
-      - name: Start OpenCode
+      - name: Start Services
         run: |
-          nohup opencode web --port 8080 &
-          sleep 12
+          nohup opencode web --port 8080 > opencode.log 2>&1 &
+          nohup openchamber --port 9090 > openchamber.log 2>&1 &
+          sleep 10
 
-      - name: Start OpenChamber
+      - name: Install and Setup ngrok
         run: |
-          nohup openchamber --port 9090 &
-          sleep 12
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt update && sudo apt install ngrok
+          ngrok config add-authtoken ${{ secrets.NGROK_AUTHTOKEN }}
 
-      # ✅ ngrok handled ONLY here
-      - name: Expose via ngrok
-        uses: luisboto/ngrok-tunnel-action@v0.1.7.2
-        with:
-          ngrok_authtoken: ${{ secrets.NGROK_AUTHTOKEN }}
-          port: 9090
-          tunnel_type: http
-          save_url_to_filename: tunnel-url.txt
-          timeout: 1h
+      - name: Start ngrok Tunnel
+        run: |
+          nohup ngrok http 9090 --log=stdout > ngrok.log 2>&1 &
+          sleep 5
+          # Extract the public URL from the ngrok API
+          curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' > tunnel-url.txt
+          echo "Public URL is: $(cat tunnel-url.txt)"
 
-      - name: Show public URL
-        run: cat tunnel-url.txt
-
-      - name: Save URL
-        uses: actions/upload-artifact@v4
-        with:
-          name: openchamber-url
-          path: tunnel-url.txt
+      - name: Save URL and Keep Alive
+        run: |
+          cat tunnel-url.txt
+          echo "Workflow will keep running for 6 hours. Cancel manually to stop."
+          # This keeps the job from finishing and killing the processes
+          sleep 21600 
 
       - name: Save OpenCode creds
         if: always()
