@@ -1,0 +1,159 @@
+name: OpenChamber + OpenCode (Windows Edition)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tunnel_provider:
+        description: 'Select Tunnel Provider'
+        required: true
+        default: 'cloudflare'
+        type: choice
+        options:
+          - ngrok
+          - cloudflare
+
+jobs:
+  serve-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Tools (PowerShell)
+        run: |
+          # Install utilities using Chocolatey (Windows Package Manager)
+          choco install jq curl -y --no-progress
+          npm install -g opencode-ai @openchamber/web
+
+      - name: Configure OpenCode (Windows Pathing)
+        run: |
+          # Create directory using PowerShell syntax
+          $ConfigDir = "$env:USERPROFILE\.config\opencode"
+          New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
+          
+          # Write the JSON config file
+          $JsonContent = @'
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "plugin": ["opencode-antigravity-auth@beta"],
+            "provider": {
+              "google": {
+                "models": {
+                  "antigravity-gemini-3-pro": {
+                    "name": "Gemini 3 Pro (Antigravity)",
+                    "limit": { "context": 1048576, "output": 65535 },
+                    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+                    "variants": { "low": { "thinkingLevel": "low" }, "high": { "thinkingLevel": "high" } }
+                  },
+                  "antigravity-gemini-3-flash": {
+                    "name": "Gemini 3 Flash (Antigravity)",
+                    "limit": { "context": 1048576, "output": 65536 },
+                    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+                    "variants": { "minimal": { "thinkingLevel": "minimal" }, "high": { "thinkingLevel": "high" } }
+                  },
+                  "antigravity-claude-sonnet-4-5-thinking": {
+                    "name": "Claude Sonnet 4.5 Thinking",
+                    "limit": { "context": 200000, "output": 64000 },
+                    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+                    "variants": { "max": { "thinkingConfig": { "thinkingBudget": 32768 } } }
+                  },
+                  "gemini-3-pro-preview": {
+                    "name": "Gemini 3 Pro Preview (CLI)",
+                    "limit": { "context": 1048576, "output": 65535 },
+                    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }
+                  }
+                }
+              }
+            }
+          }
+          '@
+          Set-Content -Path "$ConfigDir\opencode.json" -Value $JsonContent
+
+      - name: Start Services (Windows Background Jobs)
+        run: |
+          echo "Starting OpenCode..."
+          $opencodeProcess = Start-Process -FilePath "opencode" -ArgumentList "web --port 8080" -PassThru -NoNewWindow -RedirectStandardOutput "opencode.log" -RedirectStandardError "opencode_err.log"
+          
+          echo "Starting OpenChamber..."
+          $chamberProcess = Start-Process -FilePath "openchamber" -ArgumentList "--port 9090" -PassThru -NoNewWindow -RedirectStandardOutput "openchamber.log" -RedirectStandardError "openchamber_err.log"
+          
+          Start-Sleep -Seconds 20
+
+      - name: Start Tunnel (Windows)
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          if ("${{ github.event.inputs.tunnel_provider }}" -eq "ngrok") {
+            # Ngrok Setup
+            choco install ngrok -y --no-progress
+            ngrok config add-authtoken $env:NGROK_TOKEN
+            Start-Process -FilePath "ngrok" -ArgumentList "http 127.0.0.1:9090 --log=stdout" -PassThru -NoNewWindow -RedirectStandardOutput "tunnel.log"
+            Start-Sleep -Seconds 10
+            
+            # Fetch URL via API
+            $TunnelInfo = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels"
+            $URL = $TunnelInfo.tunnels[0].public_url
+            echo "URL=$URL" >> $env:GITHUB_ENV
+          } else {
+            # Cloudflare Setup
+            choco install cloudflared -y --no-progress
+            Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://127.0.0.1:9090" -PassThru -NoNewWindow -RedirectStandardOutput "tunnel.log" -RedirectStandardError "tunnel_err.log"
+            Start-Sleep -Seconds 15
+            
+            # Extract URL using regex in PowerShell
+            $LogContent = Get-Content -Path "tunnel_err.log" -Raw
+            if ($LogContent -match 'https://[-a-z0-9.]*trycloudflare.com') {
+               $URL = $matches[0]
+               echo "URL=$URL" >> $env:GITHUB_ENV
+            }
+          }
+
+      - name: Enable SSH (tmate for Windows)
+        uses: mxschmitt/action-tmate@v3
+
+      - name: Monitor & Self-Heal (PowerShell Loop)
+        run: |
+          Write-Host "------------------------------------------"
+          Write-Host "SERVER LIVE AT: $env:URL"
+          Write-Host "------------------------------------------"
+          
+          while ($true) {
+            # 1. Check if Port 9090 is listening (Self-Heal Web)
+            $connection = Get-NetTCPConnection -LocalPort 9090 -ErrorAction SilentlyContinue
+            if (-not $connection) {
+               Write-Host "[$(Get-Date)] !!! CRASH DETECTED !!! Restarting OpenChamber..."
+               Start-Process -FilePath "openchamber" -ArgumentList "--port 9090" -PassThru -NoNewWindow -RedirectStandardOutput "openchamber.log" -RedirectStandardError "openchamber_err.log"
+               Start-Sleep -Seconds 10
+            }
+
+            # 2. Check Tunnel Process (Self-Heal Tunnel)
+            $tunnelProc = Get-Process -Name "ngrok", "cloudflared" -ErrorAction SilentlyContinue
+            if (-not $tunnelProc) {
+               Write-Host "[$(Get-Date)] !!! TUNNEL DIED !!! Rehosting..."
+               if ("${{ github.event.inputs.tunnel_provider }}" -eq "ngrok") {
+                  Start-Process -FilePath "ngrok" -ArgumentList "http 127.0.0.1:9090 --log=stdout" -PassThru -NoNewWindow -RedirectStandardOutput "tunnel.log"
+                  Start-Sleep -Seconds 10
+                  $TunnelInfo = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels"
+                  $NewURL = $TunnelInfo.tunnels[0].public_url
+               } else {
+                  Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://127.0.0.1:9090" -PassThru -NoNewWindow -RedirectStandardOutput "tunnel.log" -RedirectStandardError "tunnel_err.log"
+                  Start-Sleep -Seconds 15
+                  $LogContent = Get-Content -Path "tunnel_err.log" -Raw
+                  if ($LogContent -match 'https://[-a-z0-9.]*trycloudflare.com') { $NewURL = $matches[0] }
+               }
+               Write-Host "NEW LINK: $NewURL"
+            }
+
+            # Keep Alive Ping
+            try { Invoke-WebRequest -Uri "http://127.0.0.1:9090" -Method Head -ErrorAction SilentlyContinue | Out-Null } catch {}
+            
+            # Print Logs
+            if (Test-Path "openchamber.log") { Get-Content "openchamber.log" -Tail 1 }
+            Start-Sleep -Seconds 5
+          }
