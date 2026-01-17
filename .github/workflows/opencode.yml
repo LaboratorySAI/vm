@@ -6,7 +6,7 @@ on:
       tunnel_provider:
         description: 'Select Tunnel Provider'
         required: true
-        default: 'ngrok'
+        default: 'cloudflare'
         type: choice
         options:
           - ngrok
@@ -25,18 +25,10 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Restore OpenCode Session
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: opencode-creds
-          path: /home/runner/.local/share/opencode/
-
       - name: Install Tools
         run: |
           npm install -g opencode-ai @openchamber/web
-          sudo apt update
-          sudo apt install jq lsof -y
+          sudo apt update && sudo apt install jq lsof stdbuf -y
 
       - name: Configure OpenCode
         run: |
@@ -61,59 +53,46 @@ jobs:
 
       - name: Start Services
         run: |
-          # Use nohup and backgrounding without grouping for better job control
-          nohup opencode web --port 8080 > opencode.log 2>&1 &
-          nohup openchamber --port 9090 > openchamber.log 2>&1 &
-          
-          echo "Waiting for services to boot..."
+          # stdbuf ensures we see every line of the log immediately if it crashes
+          nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
+          nohup stdbuf -oL openchamber --port 9090 > openchamber.log 2>&1 &
           sleep 20
-          
-          # Verify if 9090 is actually listening
-          if ! lsof -i :9090; then
-            echo "ERROR: OpenChamber failed to start on port 9090"
-            cat openchamber.log
-            exit 1
+
+      - name: Start Tunnel
+        run: |
+          if [[ "${{ github.event.inputs.tunnel_provider }}" == "ngrok" ]]; then
+            curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+            echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+            sudo apt update && sudo apt install ngrok -y
+            ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
+            nohup ngrok http 127.0.0.1:9090 --log=stdout > ngrok.log 2>&1 &
+            sleep 10
+            echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
+          else
+            wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+            sudo dpkg -i cloudflared-linux-amd64.deb
+            nohup cloudflared tunnel --url http://127.0.0.1:9090 > cloudflare.log 2>&1 &
+            sleep 15
+            CF_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' cloudflare.log | head -n 1)
+            echo "URL=$CF_URL" >> $GITHUB_ENV
           fi
 
-      - name: Start ngrok Tunnel
-        if: github.event.inputs.tunnel_provider == 'ngrok'
-        env:
-          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-        run: |
-          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-          sudo apt update && sudo apt install ngrok -y
-          ngrok config add-authtoken "$NGROK_TOKEN"
-          nohup ngrok http 127.0.0.1:9090 --log=stdout > ngrok.log 2>&1 &
-          sleep 10
-          echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
-
-      - name: Start Cloudflare Tunnel
-        if: github.event.inputs.tunnel_provider == 'cloudflare'
-        run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
-          nohup cloudflared tunnel --url http://127.0.0.1:9090 > cloudflare.log 2>&1 &
-          sleep 15
-          CF_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' cloudflare.log | head -n 1)
-          echo "URL=$CF_URL" >> $GITHUB_ENV
-
-      - name: Keep Alive & Monitor
+      - name: Keep Alive & Log Watcher
         run: |
           echo "------------------------------------------"
           echo "TUNNEL LIVE AT: ${{ env.URL }}"
-          echo "Provider: ${{ github.event.inputs.tunnel_provider }}"
+          echo "Please complete Google Auth now."
           echo "------------------------------------------"
-          # Monitoring loop: Pings local service every 30 seconds to keep runner active
+          
           while true; do
-            curl -s http://127.0.0.1:9090 > /dev/null
-            sleep 30
+            # Check if port 9090 is still listening
+            if ! lsof -i :9090 > /dev/null; then
+              echo "!!! OpenChamber crashed! Attempting emergency restart..."
+              nohup stdbuf -oL openchamber --port 9090 >> openchamber.log 2>&1 &
+              sleep 10
+            fi
+            
+            # Print last log line to keep GitHub console active
+            tail -n 1 openchamber.log
+            sleep 5
           done
-
-      - name: Save OpenCode Session
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: opencode-creds
-          path: /home/runner/.local/share/opencode/
-          retention-days: 30
