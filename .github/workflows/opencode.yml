@@ -41,34 +41,17 @@ jobs:
             "provider": {
               "google": {
                 "models": {
-                  "antigravity-gemini-3-pro-low": {
-                    "name": "Gemini 3 Pro Low (Antigravity)",
-                    "limit": { "context": 1048576, "output": 65535 },
-                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
-                  },
-                  "antigravity-gemini-3-pro-high": {
-                    "name": "Gemini 3 Pro High (Antigravity)",
-                    "limit": { "context": 1048576, "output": 65535 },
-                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
-                  },
-                  "antigravity-gemini-3-flash": {
-                    "name": "Gemini 3 Flash (Antigravity)",
-                    "limit": { "context": 1048576, "output": 65535 },
-                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
-                  },
-                  "antigravity-gemini-ultra": {
-                    "name": "Gemini Ultra (Antigravity)",
-                    "limit": { "context": 1048576, "output": 65535 },
-                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
-                  }
+                  "antigravity-gemini-3-pro-low": { "name": "Gemini 3 Pro Low (Antigravity)", "limit": { "context": 1048576, "output": 65535 }, "modalities": { "input": ["text","image","pdf"], "output": ["text"] } },
+                  "antigravity-gemini-3-pro-high": { "name": "Gemini 3 Pro High (Antigravity)", "limit": { "context": 1048576, "output": 65535 }, "modalities": { "input": ["text","image","pdf"], "output": ["text"] } },
+                  "antigravity-gemini-3-flash": { "name": "Gemini 3 Flash (Antigravity)", "limit": { "context": 1048576, "output": 65535 }, "modalities": { "input": ["text","image","pdf"], "output": ["text"] } },
+                  "antigravity-gemini-ultra": { "name": "Gemini Ultra (Antigravity)", "limit": { "context": 1048576, "output": 65535 }, "modalities": { "input": ["text","image","pdf"], "output": ["text"] } }
                 }
               }
             }
           }
           EOF
 
-      - name: Initial Service & Tunnel Startup
-        id: startup
+      - name: Initial Startup
         run: |
           nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
           nohup stdbuf -oL openchamber --port 9090 > openchamber.log 2>&1 &
@@ -80,46 +63,53 @@ jobs:
             sudo apt update && sudo apt install ngrok -y
             ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
             nohup ngrok http 127.0.0.1:9090 --log=stdout > tunnel.log 2>&1 &
+            sleep 10
+            echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
           else
             wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
             sudo dpkg -i cloudflared-linux-amd64.deb
             nohup cloudflared tunnel --url http://127.0.0.1:9090 > tunnel.log 2>&1 &
+            sleep 15
+            echo "URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | tail -n 1)" >> $GITHUB_ENV
           fi
-          sleep 15
 
-      - name: Keep Alive & Auto-Rehost
+      - name: Monitor & Self-Heal Website
         run: |
-          echo "Starting Monitoring & Auto-Rehost Loop..."
+          echo "------------------------------------------"
+          echo "SERVER LIVE AT: ${{ env.URL }}"
+          echo "Monitoring for crashes..."
+          echo "------------------------------------------"
           
           while true; do
-            # 1. RECOVERY: Restart OpenChamber if it crashes
+            # 1. WEBSITE CRASH CHECK: If port 9090 is dead, restart OpenChamber
             if ! lsof -i :9090 > /dev/null; then
-              echo "!!! CRITICAL: OpenChamber crashed! Restarting service..."
+              echo "[$(date)] !!! WEBSITE CRASH DETECTED !!! Restarting OpenChamber..."
               nohup stdbuf -oL openchamber --port 9090 >> openchamber.log 2>&1 &
               sleep 10
+              # Verify restart
+              if lsof -i :9090 > /dev/null; then
+                echo "[$(date)] Website successfully restored."
+              fi
             fi
 
-            # 2. RECOVERY: Restart Tunnel if it goes offline
-            # Checks if the tunnel process is still running; if not, re-launches
-            TUNNEL_PROC=$(pgrep -f "ngrok|cloudflared")
-            if [ -z "$TUNNEL_PROC" ]; then
-              echo "!!! Tunnel dropped! Generating a NEW link..."
+            # 2. TUNNEL CRASH CHECK: If tunnel process is dead, rehost with a new link
+            if ! pgrep -f "ngrok|cloudflared" > /dev/null; then
+              echo "[$(date)] !!! TUNNEL CRASH DETECTED !!! Rehosting..."
               if [[ "${{ github.event.inputs.tunnel_provider }}" == "ngrok" ]]; then
                 nohup ngrok http 127.0.0.1:9090 --log=stdout > tunnel.log 2>&1 &
                 sleep 10
-                NEW_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+                URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
               else
                 nohup cloudflared tunnel --url http://127.0.0.1:9090 > tunnel.log 2>&1 &
                 sleep 15
-                NEW_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | tail -n 1)
+                URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | tail -n 1)
               fi
               echo "------------------------------------------"
-              echo "NEW TUNNEL LINK: $NEW_URL"
+              echo "NEW TUNNEL LINK: $URL"
               echo "------------------------------------------"
             fi
             
-            # 3. KEEP ALIVE: Prevents runner idle timeout
+            # Keep log active in GitHub console
             tail -n 1 openchamber.log
-            curl -s http://127.0.0.1:9090 > /dev/null
             sleep 10
           done
