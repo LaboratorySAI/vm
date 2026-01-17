@@ -27,7 +27,6 @@ jobs:
 
       - name: Install Tools
         run: |
-          # coreutils provides stdbuf
           npm install -g opencode-ai @openchamber/web
           sudo apt update
           sudo apt install jq lsof coreutils -y 
@@ -35,7 +34,6 @@ jobs:
       - name: Configure OpenCode (Antigravity)
         run: |
           mkdir -p ~/.config/opencode
-          # Configured according to opencode-antigravity-auth model definitions
           cat << 'EOF' > ~/.config/opencode/opencode.json
           {
             "$schema": "https://opencode.ai/config.json",
@@ -43,8 +41,23 @@ jobs:
             "provider": {
               "google": {
                 "models": {
+                  "antigravity-gemini-3-pro-low": {
+                    "name": "Gemini 3 Pro Low (Antigravity)",
+                    "limit": { "context": 1048576, "output": 65535 },
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
+                  },
                   "antigravity-gemini-3-pro-high": {
                     "name": "Gemini 3 Pro High (Antigravity)",
+                    "limit": { "context": 1048576, "output": 65535 },
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
+                  },
+                  "antigravity-gemini-3-flash": {
+                    "name": "Gemini 3 Flash (Antigravity)",
+                    "limit": { "context": 1048576, "output": 65535 },
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
+                  },
+                  "antigravity-gemini-ultra": {
+                    "name": "Gemini Ultra (Antigravity)",
                     "limit": { "context": 1048576, "output": 65535 },
                     "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
                   }
@@ -54,48 +67,59 @@ jobs:
           }
           EOF
 
-      - name: Start Services
+      - name: Initial Service & Tunnel Startup
+        id: startup
         run: |
-          # Using stdbuf from coreutils to prevent log buffering
           nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
           nohup stdbuf -oL openchamber --port 9090 > openchamber.log 2>&1 &
           sleep 20
-
-      - name: Start Tunnel
-        run: |
+          
           if [[ "${{ github.event.inputs.tunnel_provider }}" == "ngrok" ]]; then
             curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
             echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
             sudo apt update && sudo apt install ngrok -y
             ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
-            nohup ngrok http 127.0.0.1:9090 --log=stdout > ngrok.log 2>&1 &
-            sleep 10
-            echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
+            nohup ngrok http 127.0.0.1:9090 --log=stdout > tunnel.log 2>&1 &
           else
             wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
             sudo dpkg -i cloudflared-linux-amd64.deb
-            nohup cloudflared tunnel --url http://127.0.0.1:9090 > cloudflare.log 2>&1 &
-            sleep 15
-            CF_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' cloudflare.log | head -n 1)
-            echo "URL=$CF_URL" >> $GITHUB_ENV
+            nohup cloudflared tunnel --url http://127.0.0.1:9090 > tunnel.log 2>&1 &
           fi
+          sleep 15
 
-      - name: Keep Alive & Log Watcher
+      - name: Keep Alive & Auto-Rehost
         run: |
-          echo "------------------------------------------"
-          echo "TUNNEL LIVE AT: ${{ env.URL }}"
-          echo "Provider: ${{ github.event.inputs.tunnel_provider }}"
-          echo "------------------------------------------"
+          echo "Starting Monitoring & Auto-Rehost Loop..."
           
           while true; do
-            # Emergency check for port 9090
+            # 1. RECOVERY: Restart OpenChamber if it crashes
             if ! lsof -i :9090 > /dev/null; then
-              echo "!!! CRITICAL: OpenChamber crashed! Restarting..."
+              echo "!!! CRITICAL: OpenChamber crashed! Restarting service..."
               nohup stdbuf -oL openchamber --port 9090 >> openchamber.log 2>&1 &
               sleep 10
             fi
+
+            # 2. RECOVERY: Restart Tunnel if it goes offline
+            # Checks if the tunnel process is still running; if not, re-launches
+            TUNNEL_PROC=$(pgrep -f "ngrok|cloudflared")
+            if [ -z "$TUNNEL_PROC" ]; then
+              echo "!!! Tunnel dropped! Generating a NEW link..."
+              if [[ "${{ github.event.inputs.tunnel_provider }}" == "ngrok" ]]; then
+                nohup ngrok http 127.0.0.1:9090 --log=stdout > tunnel.log 2>&1 &
+                sleep 10
+                NEW_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+              else
+                nohup cloudflared tunnel --url http://127.0.0.1:9090 > tunnel.log 2>&1 &
+                sleep 15
+                NEW_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | tail -n 1)
+              fi
+              echo "------------------------------------------"
+              echo "NEW TUNNEL LINK: $NEW_URL"
+              echo "------------------------------------------"
+            fi
             
+            # 3. KEEP ALIVE: Prevents runner idle timeout
             tail -n 1 openchamber.log
             curl -s http://127.0.0.1:9090 > /dev/null
-            sleep 5
+            sleep 10
           done
