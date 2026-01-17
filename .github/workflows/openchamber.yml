@@ -1,12 +1,12 @@
-name: OpenChamber + OpenCode (Antigravity)
+name: OpenChamber (winarm)
 
 on:
   workflow_dispatch:
     inputs:
       tunnel_provider:
-        description: 'Select Tunnel Provider'
+        description: Select Tunnel Provider
         required: true
-        default: 'cloudflare'
+        default: cloudflare
         type: choice
         options:
           - ngrok
@@ -17,20 +17,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Install Tools
+      - name: Install system deps
         run: |
-          npm install -g opencode-ai @openchamber/web
-          sudo apt update && sudo apt install jq lsof coreutils -y
+          sudo apt update
+          sudo apt install -y jq lsof coreutils tmate wget
+          npm install -g opencode-ai @openchamber/web opencode-antigravity-auth@beta
 
-      - name: Configure OpenCode (Complete Antigravity Suite)
+      - name: Configure OpenCode (ALL models)
         run: |
           mkdir -p ~/.config/opencode
           cat << 'EOF' > ~/.config/opencode/opencode.json
@@ -43,51 +44,86 @@ jobs:
                   "antigravity-gemini-3-pro": {
                     "name": "Gemini 3 Pro (Antigravity)",
                     "limit": { "context": 1048576, "output": 65535 },
-                    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
-                    "variants": { "low": { "thinkingLevel": "low" }, "high": { "thinkingLevel": "high" } }
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] },
+                    "variants": {
+                      "low": { "thinkingLevel": "low" },
+                      "high": { "thinkingLevel": "high" }
+                    }
                   },
                   "antigravity-gemini-3-flash": {
                     "name": "Gemini 3 Flash (Antigravity)",
                     "limit": { "context": 1048576, "output": 65536 },
-                    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
-                    "variants": { "minimal": { "thinkingLevel": "minimal" }, "high": { "thinkingLevel": "high" } }
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] },
+                    "variants": {
+                      "minimal": { "thinkingLevel": "minimal" },
+                      "low": { "thinkingLevel": "low" },
+                      "medium": { "thinkingLevel": "medium" },
+                      "high": { "thinkingLevel": "high" }
+                    }
+                  },
+                  "antigravity-claude-sonnet-4-5": {
+                    "name": "Claude Sonnet 4.5",
+                    "limit": { "context": 200000, "output": 64000 },
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
                   },
                   "antigravity-claude-sonnet-4-5-thinking": {
-                    "name": "Claude Sonnet 4.5 Thinking (Antigravity)",
+                    "name": "Claude Sonnet 4.5 Thinking",
                     "limit": { "context": 200000, "output": 64000 },
-                    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
-                    "variants": { "max": { "thinkingConfig": { "thinkingBudget": 32768 } } }
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] },
+                    "variants": {
+                      "low": { "thinkingConfig": { "thinkingBudget": 8192 } },
+                      "max": { "thinkingConfig": { "thinkingBudget": 32768 } }
+                    }
                   },
                   "antigravity-claude-opus-4-5-thinking": {
-                    "name": "Claude Opus 4.5 Thinking (Antigravity)",
+                    "name": "Claude Opus 4.5 Thinking",
                     "limit": { "context": 200000, "output": 64000 },
-                    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
-                    "variants": { "max": { "thinkingConfig": { "thinkingBudget": 32768 } } }
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] },
+                    "variants": {
+                      "low": { "thinkingConfig": { "thinkingBudget": 8192 } },
+                      "max": { "thinkingConfig": { "thinkingBudget": 32768 } }
+                    }
+                  },
+                  "gemini-2.5-flash": {
+                    "name": "Gemini 2.5 Flash (CLI)",
+                    "limit": { "context": 1048576, "output": 65536 },
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
+                  },
+                  "gemini-2.5-pro": {
+                    "name": "Gemini 2.5 Pro (CLI)",
+                    "limit": { "context": 1048576, "output": 65536 },
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
+                  },
+                  "gemini-3-flash-preview": {
+                    "name": "Gemini 3 Flash Preview",
+                    "limit": { "context": 1048576, "output": 65536 },
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
                   },
                   "gemini-3-pro-preview": {
-                    "name": "Gemini 3 Pro Preview (Gemini CLI)",
+                    "name": "Gemini 3 Pro Preview",
                     "limit": { "context": 1048576, "output": 65535 },
-                    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }
+                    "modalities": { "input": ["text","image","pdf"], "output": ["text"] }
                   }
                 }
               }
             }
           }
           EOF
-          # Config matches full models list from README
 
-      - name: Initial Startup
+      - name: Start services
         run: |
           nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
           nohup stdbuf -oL openchamber --port 9090 > openchamber.log 2>&1 &
-          sleep 20
-          
-          if [[ "${{ github.event.inputs.tunnel_provider }}" == "ngrok" ]]; then
+          sleep 15
+
+      - name: Start tunnel
+        run: |
+          if [ "${{ github.event.inputs.tunnel_provider }}" = "ngrok" ]; then
             curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
             echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-            sudo apt update && sudo apt install ngrok -y
+            sudo apt update && sudo apt install -y ngrok
             ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
-            nohup ngrok http 127.0.0.1:9090 --log=stdout > tunnel.log 2>&1 &
+            nohup ngrok http 127.0.0.1:9090 > tunnel.log 2>&1 &
             sleep 10
             echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
           else
@@ -95,36 +131,20 @@ jobs:
             sudo dpkg -i cloudflared-linux-amd64.deb
             nohup cloudflared tunnel --url http://127.0.0.1:9090 > tunnel.log 2>&1 &
             sleep 15
-            echo "URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | tail -n 1)" >> $GITHUB_ENV
+            echo "URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | tail -n1)" >> $GITHUB_ENV
           fi
 
-      - name: Monitor & Display Link
+      - name: Enable SSH (tmate)
         run: |
-          CURRENT_URL="${{ env.URL }}"
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait-for-connection
+          echo "SSH_CMD=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')" >> $GITHUB_ENV
+
+      - name: Keep alive + monitor
+        run: |
           while true; do
-            echo "------------------------------------------"
-            echo "ACTIVE LINK: $CURRENT_URL"
-            echo "------------------------------------------"
-            
-            # Restart service if it crashes
-            if ! lsof -i :9090 > /dev/null; then
-              nohup stdbuf -oL openchamber --port 9090 >> openchamber.log 2>&1 &
-              sleep 10
-            fi
-            
-            # Restart tunnel if it crashes
-            if ! pgrep -f "ngrok|cloudflared" > /dev/null; then
-              if [[ "${{ github.event.inputs.tunnel_provider }}" == "ngrok" ]]; then
-                nohup ngrok http 127.0.0.1:9090 --log=stdout > tunnel.log 2>&1 &
-                sleep 10
-                CURRENT_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-              else
-                nohup cloudflared tunnel --url http://127.0.0.1:9090 > tunnel.log 2>&1 &
-                sleep 15
-                CURRENT_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | tail -n 1)
-              fi
-            fi
-            
-            tail -n 1 openchamber.log
-            sleep 10
+            echo "URL: ${{ env.URL }}"
+            echo "SSH: ${{ env.SSH_CMD }}"
+            lsof -i :9090 >/dev/null || nohup openchamber --port 9090 >> openchamber.log 2>&1 &
+            sleep 20
           done
