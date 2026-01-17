@@ -1,0 +1,49 @@
+name: Start OpenChamber with Ngrok
+
+on:
+  workflow_dispatch:
+
+jobs:
+  serve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install OpenCode (AI CLI)
+        run: |
+          npm install -g opencode-ai
+          # Log in and authenticate using API keys
+          # This requires manual first-time setup or using stored session files
+          opencode auth login || echo "Continue if already logged in"
+
+      - name: Install OpenChamber Web UI
+        run: |
+          npm install -g @openchamber/web
+
+      - name: Start OpenChamber Server
+        run: |
+          nohup openchamber --port 8080 &
+          sleep 10
+
+      - name: Start Ngrok Tunnel
+        uses: luisboto/ngrok-tunnel-action@v0.1.7.2
+        with:
+          ngrok_authtoken: ${{ secrets.NGROK_AUTHTOKEN }}
+          port: 8080
+          tunnel_type: http
+          save_url_to_filename: tunnel-url.txt
+
+      - name: Show public URL
+        run: cat tunnel-url.txt
+
+      - name: Upload tunnel URL
+        uses: actions/upload-artifact@v4
+        with:
+          name: openchamber-tunnel
+          path: tunnel-url.txt
