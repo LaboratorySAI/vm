@@ -6,28 +6,27 @@ on:
 jobs:
   serve:
     runs-on: ubuntu-latest
-    steps:
 
-      # 1️⃣ Checkout
+    env:
+      OPENCODE_SERVER_PASSWORD: ${{ secrets.OPENCODE_PASSWORD }}
+
+    steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Node
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      # 3️⃣ Try restoring creds (NON-FAIL)
-      - name: Restore OpenCode credentials (if exists)
-        id: restore-creds
-        continue-on-error: true
+      # 🔹 Restore creds only if artifact exists
+      - name: Try restore OpenCode creds
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: opencode-creds
           path: ~/.local/share/opencode/
 
-      # 4️⃣ Install OpenCode + Antigravity plugin
       - name: Install OpenCode + Antigravity
         run: |
           npm install -g opencode-ai
@@ -56,24 +55,19 @@ jobs:
           }
           EOF
 
-      # 5️⃣ Install OpenChamber
       - name: Install OpenChamber
-        run: |
-          npm install -g @openchamber/web
+        run: npm install -g @openchamber/web
 
-      # 6️⃣ Start OpenCode backend
       - name: Start OpenCode
         run: |
           nohup opencode web --port 8080 &
           sleep 12
 
-      # 7️⃣ Start OpenChamber UI
       - name: Start OpenChamber
         run: |
           nohup openchamber --port 9090 &
           sleep 12
 
-      # 8️⃣ Expose with ngrok
       - name: Start ngrok
         uses: luisboto/ngrok-tunnel-action@v0.1.7.2
         with:
@@ -82,19 +76,16 @@ jobs:
           tunnel_type: http
           save_url_to_filename: tunnel-url.txt
 
-      # 9️⃣ Show URL
-      - name: Show public URL
+      - name: Show URL
         run: cat tunnel-url.txt
 
-      # 🔟 Save URL artifact
       - name: Save tunnel URL
         uses: actions/upload-artifact@v4
         with:
           name: openchamber-url
           path: tunnel-url.txt
 
-      # 1️⃣1️⃣ Save creds (ALWAYS)
-      - name: Save OpenCode credentials
+      - name: Save OpenCode creds
         if: always()
         uses: actions/upload-artifact@v4
         with:
