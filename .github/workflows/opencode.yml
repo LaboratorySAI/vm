@@ -11,18 +11,11 @@ on:
         options:
           - ngrok
           - cloudflare
-      timeout_hours:
-        description: 'Auto-shutdown after (hours)'
+      timeout_minutes:
+        description: 'Auto-shutdown after (minutes)'
         required: true
-        default: '5'
-        type: choice
-        options:
-          - '1'
-          - '2'
-          - '3'
-          - '4'
-          - '5'
-          - '6'
+        default: '300'
+        type: string
 
 jobs:
   serve:
@@ -183,11 +176,11 @@ jobs:
         run: |
           echo "------------------------------------------"
           echo "SERVER LIVE AT: ${{ env.URL }}"
-          echo "AUTO-SHUTDOWN IN: ${{ github.event.inputs.timeout_hours }} hour(s)"
+          echo "AUTO-SHUTDOWN IN: ${{ github.event.inputs.timeout_minutes }} minute(s)"
           echo "------------------------------------------"
           
           START_TIME=$(date +%s)
-          TIMEOUT_SECONDS=$(( ${{ github.event.inputs.timeout_hours }} * 3600 ))
+          TIMEOUT_SECONDS=$(( ${{ github.event.inputs.timeout_minutes }} * 60 ))
           
           while true; do
             ELAPSED=$(( $(date +%s) - START_TIME ))
