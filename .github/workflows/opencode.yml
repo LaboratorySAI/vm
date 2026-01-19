@@ -20,6 +20,41 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # ============================================================
+      # PERSISTENCE: Restore previous session (OAuth tokens, accounts)
+      # ============================================================
+      - name: Restore Session Data (Artifact)
+        uses: actions/download-artifact@v4
+        with:
+          name: opencode-session
+          path: /tmp/opencode-restore
+        continue-on-error: true
+
+      - name: Apply Restored Session Data
+        run: |
+          if [ -d "/tmp/opencode-restore" ]; then
+            echo "Found previous session data, restoring..."
+            mkdir -p ~/.config/opencode ~/.local/share/opencode
+            cp -rv /tmp/opencode-restore/config/* ~/.config/opencode/ 2>/dev/null || true
+            cp -rv /tmp/opencode-restore/share/* ~/.local/share/opencode/ 2>/dev/null || true
+            echo "Session restored successfully!"
+            ls -la ~/.config/opencode/
+          else
+            echo "No previous session found. Fresh start."
+          fi
+
+      # ============================================================
+      # CACHE: Speed up npm installations
+      # ============================================================
+      - name: Cache npm modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+          key: npm-cache-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            npm-cache-${{ runner.os }}-
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -164,3 +199,23 @@ jobs:
             tail -n 1 openchamber.log
             sleep 5
           done
+
+      - name: Prepare Session Data for Save
+        if: always()
+        run: |
+          echo "Preparing session data for persistence..."
+          mkdir -p /tmp/opencode-save/config /tmp/opencode-save/share
+          cp -rv ~/.config/opencode/* /tmp/opencode-save/config/ 2>/dev/null || true
+          cp -rv ~/.local/share/opencode/auth.json /tmp/opencode-save/share/ 2>/dev/null || true
+          cp -rv ~/.local/share/opencode/storage /tmp/opencode-save/share/ 2>/dev/null || true
+          echo "Session data prepared."
+          ls -laR /tmp/opencode-save/
+
+      - name: Upload Session Data (Artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-session
+          path: /tmp/opencode-save/
+          retention-days: 7
+          overwrite: true
