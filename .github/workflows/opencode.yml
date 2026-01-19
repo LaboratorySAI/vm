@@ -11,6 +11,18 @@ on:
         options:
           - ngrok
           - cloudflare
+      timeout_hours:
+        description: 'Auto-shutdown after (hours)'
+        required: true
+        default: '5'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
 
 jobs:
   serve:
@@ -171,17 +183,32 @@ jobs:
         run: |
           echo "------------------------------------------"
           echo "SERVER LIVE AT: ${{ env.URL }}"
+          echo "AUTO-SHUTDOWN IN: ${{ github.event.inputs.timeout_hours }} hour(s)"
           echo "------------------------------------------"
           
+          START_TIME=$(date +%s)
+          TIMEOUT_SECONDS=$(( ${{ github.event.inputs.timeout_hours }} * 3600 ))
+          
           while true; do
-            # Restart web service if port 9090 drops
+            ELAPSED=$(( $(date +%s) - START_TIME ))
+            REMAINING=$(( TIMEOUT_SECONDS - ELAPSED ))
+            
+            if [ $REMAINING -le 0 ]; then
+              echo "[$(date)] Timeout reached. Initiating graceful shutdown..."
+              pkill -f "opencode|openchamber|ngrok|cloudflared" 2>/dev/null || true
+              break
+            fi
+            
+            if [ $(( ELAPSED % 300 )) -lt 10 ]; then
+              echo "[$(date)] Time remaining: $(( REMAINING / 60 )) minutes"
+            fi
+            
             if ! lsof -i :9090 > /dev/null; then
               echo "[$(date)] Restoring OpenChamber..."
               nohup stdbuf -oL openchamber --port 9090 >> openchamber.log 2>&1 &
               sleep 10
             fi
 
-            # Re-establish tunnel if it crashes
             if ! pgrep -f "ngrok|cloudflared" > /dev/null; then
               echo "[$(date)] Re-hosting tunnel..."
               if [[ "${{ github.event.inputs.tunnel_provider }}" == "ngrok" ]]; then
