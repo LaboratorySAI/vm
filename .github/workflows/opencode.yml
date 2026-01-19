@@ -29,11 +29,13 @@ jobs:
       # PERSISTENCE: Restore previous session (OAuth tokens, accounts)
       # ============================================================
       - name: Restore Session Data (Artifact)
-        uses: actions/download-artifact@v4
+        uses: dawidd6/action-download-artifact@v6
         with:
           name: opencode-session
           path: /tmp/opencode-restore
-        continue-on-error: true
+          workflow: opencode.yml
+          workflow_conclusion: ""
+          if_no_artifact_found: ignore
 
       - name: Apply Restored Session Data
         run: |
