@@ -9,8 +9,8 @@ on:
         default: 'OpenChamber'
         type: choice
         options:
-          - OpenCode
           - OpenChamber
+          - OpenCode
           - CLI
       tunnel_provider:
         description: 'Select Tunnel Provider'
@@ -34,7 +34,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Restore Session Data
+      # ============================================================
+      # PERSISTENCE: Restore previous session
+      # ============================================================
+      - name: Restore Session Data (Artifact)
         uses: dawidd6/action-download-artifact@v6
         continue-on-error: true
         with:
@@ -48,12 +51,20 @@ jobs:
 
       - name: Apply Restored Session Data
         run: |
+          echo "=== RESTORE DEBUG ==="
           if [ -d "/tmp/opencode-restore" ]; then
+            echo "Restoring session files..."
             mkdir -p ~/.config/opencode ~/.local/share/opencode
             cp -rv /tmp/opencode-restore/config/* ~/.config/opencode/ 2>/dev/null || true
             cp -rv /tmp/opencode-restore/share/* ~/.local/share/opencode/ 2>/dev/null || true
+            echo "Session restored successfully!"
+          else
+            echo "No previous session found. Fresh start."
           fi
 
+      # ============================================================
+      # SETUP & INSTALLATION
+      # ============================================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -61,16 +72,19 @@ jobs:
 
       - name: Install Tools
         run: |
-          # If mode is CLI, force witty installation
+          # Install system dependencies
+          sudo apt update && sudo apt install jq lsof coreutils -y
+
+          echo "Selected Mode: ${{ github.event.inputs.app_mode }}"
+
           if [[ "${{ github.event.inputs.app_mode }}" == "CLI" ]]; then
-            curl -fsSL https://witty.ai/install.sh | bash
-            # Add witty to path for current session
-            echo "$HOME/.witty/bin" >> $GITHUB_PATH
-            ~/.witty/bin/witty install opencode-ai
+            echo "Installing Opencode CLI..."
+            # Using npm instead of curl to prevent HTML/syntax errors
+            npm install -g opencode-ai
           else
+            echo "Installing Full Suite (OpenCode + OpenChamber)..."
             npm install -g opencode-ai @openchamber/web
           fi
-          sudo apt update && sudo apt install jq lsof coreutils -y
 
       - name: Configure OpenCode
         run: |
@@ -79,77 +93,125 @@ jobs:
           {
             "$schema": "https://opencode.ai/config.json",
             "plugin": ["opencode-antigravity-auth@beta"],
-            "provider": { "google": { "models": { "gemini-3-flash-preview": { "name": "Gemini 3 Flash", "limit": { "context": 1048576 } } } } }
+            "provider": {
+              "google": {
+                "models": {
+                  "gemini-3-flash-preview": {
+                    "name": "Gemini 3 Flash Preview",
+                    "limit": { "context": 1048576, "output": 65536 },
+                    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }
+                  }
+                }
+              }
+            }
           }
           EOF
 
-      - name: Initial Startup & Tunneling
+      # ============================================================
+      # STARTUP & TUNNELING
+      # ============================================================
+      - name: Initial Startup
         run: |
-          # Determine which port to tunnel based on app_mode
-          PORT=9090
-          if [[ "${{ github.event.inputs.app_mode }}" == "OpenCode" ]]; then
-            nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
-            PORT=8080
-          elif [[ "${{ github.event.inputs.app_mode }}" == "CLI" ]]; then
-            # CLI runs opencode directly; we log it but don't background it if it's the primary interactive tool
-            nohup stdbuf -oL opencode --cli > cli.log 2>&1 &
-            PORT=8080 # Assuming CLI exposes a local web interface or debug port
-          else
+          MODE="${{ github.event.inputs.app_mode }}"
+          TARGET_PORT=8080 # Default
+          
+          if [[ "$MODE" == "OpenChamber" ]]; then
+            echo "Starting OpenChamber on port 9090..."
             nohup stdbuf -oL openchamber --port 9090 > openchamber.log 2>&1 &
-            PORT=9090
+            TARGET_PORT=9090
+          elif [[ "$MODE" == "OpenCode" ]]; then
+            echo "Starting OpenCode Web on port 8080..."
+            nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
+            TARGET_PORT=8080
+          else 
+            # CLI Mode
+            echo "Starting OpenCode CLI (Web Interface) on port 8080..."
+            nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
+            TARGET_PORT=8080
           fi
           
-          sleep 15
+          # Save port for next steps
+          echo "TARGET_PORT=$TARGET_PORT" >> $GITHUB_ENV
           
+          sleep 20
+          
+          # Initialize Tunnel
           if [[ "${{ github.event.inputs.tunnel_provider }}" == "ngrok" ]]; then
             curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
             echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
             sudo apt update && sudo apt install ngrok -y
             ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
-            nohup ngrok http $PORT --log=stdout > tunnel.log 2>&1 &
+            nohup ngrok http 127.0.0.1:$TARGET_PORT --log=stdout > tunnel.log 2>&1 &
             sleep 10
             echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
           else
             wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
             sudo dpkg -i cloudflared-linux-amd64.deb
-            nohup cloudflared tunnel --url http://127.0.0.1:$PORT > tunnel.log 2>&1 &
+            nohup cloudflared tunnel --url http://127.0.0.1:$TARGET_PORT > tunnel.log 2>&1 &
             sleep 15
             echo "URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | tail -n 1)" >> $GITHUB_ENV
           fi
 
-      - name: Execution & Monitoring
+      - name: Monitor & Self-Heal
         run: |
           echo "------------------------------------------"
-          echo "MODE: ${{ github.event.inputs.app_mode }}"
           echo "SERVER LIVE AT: ${{ env.URL }}"
+          echo "MODE: ${{ github.event.inputs.app_mode }}"
+          echo "PORT: ${{ env.TARGET_PORT }}"
           echo "------------------------------------------"
           
-          TIMEOUT_SECONDS=$(( ${{ github.event.inputs.timeout_minutes }} * 60 ))
           START_TIME=$(date +%s)
+          TIMEOUT_SECONDS=$(( ${{ github.event.inputs.timeout_minutes }} * 60 ))
           
           while true; do
             ELAPSED=$(( $(date +%s) - START_TIME ))
-            if [ $ELAPSED -ge $TIMEOUT_SECONDS ]; then break; fi
+            REMAINING=$(( TIMEOUT_SECONDS - ELAPSED ))
             
-            # Simple health check for the tunnel
-            if ! pgrep -f "ngrok|cloudflared" > /dev/null; then
-              echo "Tunnel lost. Reconnecting..."
-              # (Add reconnection logic here if needed)
+            if [ $REMAINING -le 0 ]; then
+              echo "Timeout reached. Shutting down."
+              break
             fi
-            sleep 30
+            
+            # Print status every 5 mins
+            if [ $(( ELAPSED % 300 )) -lt 10 ]; then
+              echo "[$(date)] Remaining: $(( REMAINING / 60 )) min. URL: ${{ env.URL }}"
+            fi
+            
+            # Simple process check
+            if ! pgrep -f "opencode|openchamber" > /dev/null; then
+               echo "[$(date)] Process died! Restarting..."
+               if [[ "${{ env.TARGET_PORT }}" == "9090" ]]; then
+                 nohup stdbuf -oL openchamber --port 9090 >> openchamber.log 2>&1 &
+               else
+                 nohup stdbuf -oL opencode web --port 8080 >> opencode.log 2>&1 &
+               fi
+            fi
+
+            sleep 10
           done
 
-      - name: Prepare & Upload Session
+      # ============================================================
+      # SAVING SESSION
+      # ============================================================
+      - name: Prepare Session Data for Save
         if: always()
         run: |
+          echo "Saving session data..."
           mkdir -p /tmp/opencode-save/config /tmp/opencode-save/share
-          cp -rv $HOME/.config/opencode/* /tmp/opencode-save/config/ 2>/dev/null || true
-          cp -rv $HOME/.local/share/opencode/* /tmp/opencode-save/share/ 2>/dev/null || true
           
-      - name: Upload Artifact
+          if [ -d "$HOME/.config/opencode" ]; then
+            cp -rv $HOME/.config/opencode/* /tmp/opencode-save/config/ 2>/dev/null || true
+          fi
+          
+          if [ -d "$HOME/.local/share/opencode" ]; then
+            cp -rv $HOME/.local/share/opencode/* /tmp/opencode-save/share/ 2>/dev/null || true
+          fi
+          
+      - name: Upload Session Data (Artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: opencode-session
           path: /tmp/opencode-save/
           retention-days: 30
+          overwrite: true
