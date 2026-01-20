@@ -10,8 +10,8 @@ on:
         type: choice
         options:
           - OpenChamber
-          - OpenCode
-          - CLI
+          - OpenCode Web
+          - OpenCode CLI
       tunnel_provider:
         description: 'Select Tunnel Provider'
         required: true
@@ -77,10 +77,15 @@ jobs:
 
           echo "Selected Mode: ${{ github.event.inputs.app_mode }}"
 
-          if [[ "${{ github.event.inputs.app_mode }}" == "CLI" ]]; then
-            echo "Installing Opencode CLI..."
+          if [[ "${{ github.event.inputs.app_mode }}" == "OpenCode CLI" ]]; then
+            echo "Installing Opencode CLI Tools & ttyd..."
             # Using npm instead of curl to prevent HTML/syntax errors
             npm install -g opencode-ai
+            
+            # Install ttyd
+            wget -q -O ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.3/ttyd.x86_64
+            chmod +x ttyd
+            sudo mv ttyd /usr/local/bin/
           else
             echo "Installing Full Suite (OpenCode + OpenChamber)..."
             npm install -g opencode-ai @openchamber/web
@@ -119,14 +124,14 @@ jobs:
             echo "Starting OpenChamber on port 9090..."
             nohup stdbuf -oL openchamber --port 9090 > openchamber.log 2>&1 &
             TARGET_PORT=9090
-          elif [[ "$MODE" == "OpenCode" ]]; then
+          elif [[ "$MODE" == "OpenCode Web" ]]; then
             echo "Starting OpenCode Web on port 8080..."
             nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
             TARGET_PORT=8080
           else 
             # CLI Mode
-            echo "Starting OpenCode CLI (Web Interface) on port 8080..."
-            nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
+            echo "Starting OpenCode CLI (via ttyd) on port 8080..."
+            nohup stdbuf -oL ttyd -p 8080 -W bash > opencode.log 2>&1 &
             TARGET_PORT=8080
           fi
           
@@ -178,12 +183,14 @@ jobs:
             fi
             
             # Simple process check
-            if ! pgrep -f "opencode|openchamber" > /dev/null; then
+            if ! pgrep -f "opencode|openchamber|ttyd" > /dev/null; then
                echo "[$(date)] Process died! Restarting..."
-               if [[ "${{ env.TARGET_PORT }}" == "9090" ]]; then
+               if [[ "${{ github.event.inputs.app_mode }}" == "OpenChamber" ]]; then
                  nohup stdbuf -oL openchamber --port 9090 >> openchamber.log 2>&1 &
-               else
+               elif [[ "${{ github.event.inputs.app_mode }}" == "OpenCode Web" ]]; then
                  nohup stdbuf -oL opencode web --port 8080 >> opencode.log 2>&1 &
+               else
+                 nohup stdbuf -oL ttyd -p 8080 -W bash >> opencode.log 2>&1 &
                fi
             fi
 
