@@ -35,7 +35,7 @@ jobs:
           name: opencode-session
           path: /tmp/opencode-restore
           workflow: opencode.yml
-          workflow_conclusion: ""
+          workflow_conclusion: success
           if_no_artifact_found: ignore
           repo: ${{ github.repository }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
