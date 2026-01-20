@@ -230,14 +230,14 @@ jobs:
           echo "Preparing session data for persistence..."
           mkdir -p /tmp/opencode-save/config /tmp/opencode-save/share
           # Save everything from ~/.config/opencode into config/
-          if [ -d "/home/user/.config/opencode" ]; then
-            cp -rv /home/user/.config/opencode/* /tmp/opencode-save/config/ 2>/dev/null || true
+          if [ -d "$HOME/.config/opencode" ]; then
+            cp -rv $HOME/.config/opencode/* /tmp/opencode-save/config/ 2>/dev/null || true
           fi
           # Save auth.json and storage from ~/.local/share/opencode into share/
-          if [ -d "/home/user/.local/share/opencode" ]; then
-            cp -v /home/user/.local/share/opencode/auth.json /tmp/opencode-save/share/ 2>/dev/null || true
-            if [ -d "/home/user/.local/share/opencode/storage" ]; then
-              cp -rv /home/user/.local/share/opencode/storage /tmp/opencode-save/share/ 2>/dev/null || true
+          if [ -d "$HOME/.local/share/opencode" ]; then
+            cp -v $HOME/.local/share/opencode/auth.json /tmp/opencode-save/share/ 2>/dev/null || true
+            if [ -d "$HOME/.local/share/opencode/storage" ]; then
+              cp -rv $HOME/.local/share/opencode/storage /tmp/opencode-save/share/ 2>/dev/null || true
             fi
           fi
           echo "Session data prepared."
