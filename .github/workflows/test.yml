@@ -1,0 +1,155 @@
+name: OpenChamber
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_mode:
+        description: 'Select Application Mode'
+        required: true
+        default: 'OpenChamber'
+        type: choice
+        options:
+          - OpenCode
+          - OpenChamber
+          - CLI
+      tunnel_provider:
+        description: 'Select Tunnel Provider'
+        required: true
+        default: 'cloudflare'
+        type: choice
+        options:
+          - ngrok
+          - cloudflare
+      timeout_minutes:
+        description: 'Auto-shutdown after (minutes)'
+        required: true
+        default: '300'
+        type: string
+
+jobs:
+  serve:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Restore Session Data
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
+        with:
+          name: opencode-session
+          path: /tmp/opencode-restore
+          workflow: opencode.yml
+          workflow_conclusion: success
+          if_no_artifact_found: ignore
+          repo: ${{ github.repository }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply Restored Session Data
+        run: |
+          if [ -d "/tmp/opencode-restore" ]; then
+            mkdir -p ~/.config/opencode ~/.local/share/opencode
+            cp -rv /tmp/opencode-restore/config/* ~/.config/opencode/ 2>/dev/null || true
+            cp -rv /tmp/opencode-restore/share/* ~/.local/share/opencode/ 2>/dev/null || true
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Tools
+        run: |
+          # If mode is CLI, force witty installation
+          if [[ "${{ github.event.inputs.app_mode }}" == "CLI" ]]; then
+            curl -fsSL https://witty.ai/install.sh | bash
+            # Add witty to path for current session
+            echo "$HOME/.witty/bin" >> $GITHUB_PATH
+            ~/.witty/bin/witty install opencode-ai
+          else
+            npm install -g opencode-ai @openchamber/web
+          fi
+          sudo apt update && sudo apt install jq lsof coreutils -y
+
+      - name: Configure OpenCode
+        run: |
+          mkdir -p ~/.config/opencode
+          cat << 'EOF' > ~/.config/opencode/opencode.json
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "plugin": ["opencode-antigravity-auth@beta"],
+            "provider": { "google": { "models": { "gemini-3-flash-preview": { "name": "Gemini 3 Flash", "limit": { "context": 1048576 } } } } }
+          }
+          EOF
+
+      - name: Initial Startup & Tunneling
+        run: |
+          # Determine which port to tunnel based on app_mode
+          PORT=9090
+          if [[ "${{ github.event.inputs.app_mode }}" == "OpenCode" ]]; then
+            nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
+            PORT=8080
+          elif [[ "${{ github.event.inputs.app_mode }}" == "CLI" ]]; then
+            # CLI runs opencode directly; we log it but don't background it if it's the primary interactive tool
+            nohup stdbuf -oL opencode --cli > cli.log 2>&1 &
+            PORT=8080 # Assuming CLI exposes a local web interface or debug port
+          else
+            nohup stdbuf -oL openchamber --port 9090 > openchamber.log 2>&1 &
+            PORT=9090
+          fi
+          
+          sleep 15
+          
+          if [[ "${{ github.event.inputs.tunnel_provider }}" == "ngrok" ]]; then
+            curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+            echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+            sudo apt update && sudo apt install ngrok -y
+            ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
+            nohup ngrok http $PORT --log=stdout > tunnel.log 2>&1 &
+            sleep 10
+            echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
+          else
+            wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+            sudo dpkg -i cloudflared-linux-amd64.deb
+            nohup cloudflared tunnel --url http://127.0.0.1:$PORT > tunnel.log 2>&1 &
+            sleep 15
+            echo "URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | tail -n 1)" >> $GITHUB_ENV
+          fi
+
+      - name: Execution & Monitoring
+        run: |
+          echo "------------------------------------------"
+          echo "MODE: ${{ github.event.inputs.app_mode }}"
+          echo "SERVER LIVE AT: ${{ env.URL }}"
+          echo "------------------------------------------"
+          
+          TIMEOUT_SECONDS=$(( ${{ github.event.inputs.timeout_minutes }} * 60 ))
+          START_TIME=$(date +%s)
+          
+          while true; do
+            ELAPSED=$(( $(date +%s) - START_TIME ))
+            if [ $ELAPSED -ge $TIMEOUT_SECONDS ]; then break; fi
+            
+            # Simple health check for the tunnel
+            if ! pgrep -f "ngrok|cloudflared" > /dev/null; then
+              echo "Tunnel lost. Reconnecting..."
+              # (Add reconnection logic here if needed)
+            fi
+            sleep 30
+          done
+
+      - name: Prepare & Upload Session
+        if: always()
+        run: |
+          mkdir -p /tmp/opencode-save/config /tmp/opencode-save/share
+          cp -rv $HOME/.config/opencode/* /tmp/opencode-save/config/ 2>/dev/null || true
+          cp -rv $HOME/.local/share/opencode/* /tmp/opencode-save/share/ 2>/dev/null || true
+          
+      - name: Upload Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-session
+          path: /tmp/opencode-save/
+          retention-days: 30
