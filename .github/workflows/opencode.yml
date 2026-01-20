@@ -30,22 +30,33 @@ jobs:
       # ============================================================
       - name: Restore Session Data (Artifact)
         uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
         with:
           name: opencode-session
           path: /tmp/opencode-restore
           workflow: opencode.yml
           workflow_conclusion: ""
           if_no_artifact_found: ignore
+          repo: ${{ github.repository }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Apply Restored Session Data
         run: |
+          echo "=== RESTORE DEBUG ==="
+          echo "Contents of /tmp/opencode-restore:"
+          ls -la /tmp/opencode-restore/ 2>/dev/null || echo "Directory does not exist"
+          
           if [ -d "/tmp/opencode-restore" ]; then
-            echo "Found previous session data, restoring..."
+            echo "Found restore directory, checking contents..."
+            find /tmp/opencode-restore -type f 2>/dev/null || echo "No files found"
+            
             mkdir -p ~/.config/opencode ~/.local/share/opencode
             if [ -d "/tmp/opencode-restore/config" ]; then
+              echo "Restoring config files..."
               cp -rv /tmp/opencode-restore/config/* ~/.config/opencode/ 2>/dev/null || true
             fi
             if [ -d "/tmp/opencode-restore/share" ]; then
+              echo "Restoring share files..."
               cp -rv /tmp/opencode-restore/share/* ~/.local/share/opencode/ 2>/dev/null || true
             fi
             echo "Session restored successfully!"
@@ -229,23 +240,44 @@ jobs:
         run: |
           echo "Preparing session data for persistence..."
           mkdir -p /tmp/opencode-save/config /tmp/opencode-save/share
+          
           # Save everything from ~/.config/opencode into config/
-          if [ -d "$HOME/.config/opencode" ]; then
+          if [ -d "$HOME/.config/opencode" ] && [ "$(ls -A $HOME/.config/opencode 2>/dev/null)" ]; then
             cp -rv $HOME/.config/opencode/* /tmp/opencode-save/config/ 2>/dev/null || true
+            echo "Config saved: $(ls -la /tmp/opencode-save/config/ 2>/dev/null | wc -l) files"
+          else
+            echo "No config data to save"
           fi
+          
           # Save auth.json and storage from ~/.local/share/opencode into share/
           if [ -d "$HOME/.local/share/opencode" ]; then
-            cp -v $HOME/.local/share/opencode/auth.json /tmp/opencode-save/share/ 2>/dev/null || true
-            if [ -d "$HOME/.local/share/opencode/storage" ]; then
-              cp -rv $HOME/.local/share/opencode/storage /tmp/opencode-save/share/ 2>/dev/null || true
+            if [ -f "$HOME/.local/share/opencode/auth.json" ]; then
+              cp -v $HOME/.local/share/opencode/auth.json /tmp/opencode-save/share/ 2>/dev/null || true
+              echo "Auth data saved"
             fi
+            if [ -d "$HOME/.local/share/opencode/storage" ] && [ "$(ls -A $HOME/.local/share/opencode/storage 2>/dev/null)" ]; then
+              cp -rv $HOME/.local/share/opencode/storage /tmp/opencode-save/share/ 2>/dev/null || true
+              echo "Storage data saved: $(find $HOME/.local/share/opencode/storage -type f 2>/dev/null | wc -l) files"
+            fi
+          else
+            echo "No share data to save"
           fi
-          echo "Session data prepared."
+          
+          # Verify we have something to save
+          if [ "$(find /tmp/opencode-save -type f 2>/dev/null | wc -l)" -gt 0 ]; then
+            echo "Session data prepared successfully: $(find /tmp/opencode-save -type f | wc -l) files total"
+            ls -la /tmp/opencode-save/
+          else
+            echo "No session data to save - creating placeholder"
+            echo "$(date): No session data available" > /tmp/opencode-save/placeholder.txt
+          fi
+          
       - name: Upload Session Data (Artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: opencode-session
           path: /tmp/opencode-save/
-          retention-days: 7
+          retention-days: 30
           overwrite: true
+          if-no-files-found: warn
