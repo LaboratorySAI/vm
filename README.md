@@ -38,6 +38,7 @@ Getting your own temporary VM is easy. Here's how:
 - **Multi-OS Support**: Choose from Windows, macOS, and Ubuntu.
 - **Customizable Setup**: Install common development tools like VS Code, GitHub Desktop, and even Android Studio using workflow inputs.
 - **Flexible Tunneling**: Use either `ngrok` or `cloudflare` to create a secure tunnel to your VM.
+- **OpenChamber Persistence**: Robust session saving for OpenChamber and OpenCode, preserving your chats, settings, and authentication across workflow runs.
 - **Easy to Use**: Get up and running in minutes with minimal configuration.
 - **Free**: Leverages the free tier of GitHub Actions.
 
@@ -52,6 +53,7 @@ For more detailed information, please refer to the documents in the `/docs` dire
 - [**How It Works**](docs/HOW_IT_WORKS.md): A technical overview of the project.
 - [**Installation and Use**](docs/INSTALLATION_AND_USE.md): Step-by-step guide to using the workflows.
 - [**Configurations**](docs/CONFIGURATIONS.md): Detailed information on all workflow inputs and secrets.
+- [**OpenChamber Persistence**](docs/PERSISTENCE_GUIDE.md): Technical details on how session data is saved and restored.
 - [**Pre-installed Software**](docs/PRE_INSTALLED_SOFTWARE.md): A list of all available optional software.
 - [**SSH Termius Guide**](docs/SSH_TERMIUS_GUIDE.md): How to connect via SSH using Termius.
 - [**Disclaimer**](docs/DISCLAIMER.md): Important limitations and usage guidelines.
