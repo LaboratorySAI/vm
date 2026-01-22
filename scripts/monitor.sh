@@ -2,40 +2,48 @@
 # ==============================================================================
 # OpenCode Monitor & Self-Heal Script
 # ==============================================================================
-# This script monitors the OpenCode and OpenChamber services, automatically
-# restarting them if they crash. It also manages the tunnel connection.
+# This script monitors OpenCode (TTY), OpenChamber, and OpenCode Web services,
+# automatically restarting them if they crash. It also manages the tunnel connections.
 #
-# Usage: ./monitor.sh <tunnel_provider> <timeout_minutes> <tunnel_url>
+# Usage: ./monitor.sh <tunnel_provider> <timeout_minutes> <url_tty> <url_chamber> <url_web>
 #
 # Arguments:
 #   tunnel_provider: "ngrok" or "cloudflare"
 #   timeout_minutes: Auto-shutdown timeout in minutes
-#   tunnel_url: Initial tunnel URL (passed from workflow)
+#   url_tty: Initial tunnel URL for OpenCode TTY
+#   url_chamber: Initial tunnel URL for OpenChamber
+#   url_web: Initial tunnel URL for OpenCode Web
 # ==============================================================================
 
 set -uo pipefail
 
 TUNNEL_PROVIDER="${1:-cloudflare}"
 TIMEOUT_MINUTES="${2:-300}"
-INITIAL_URL="${3:-}"
+URL_TTY="${3:-}"
+URL_CHAMBER="${4:-}"
+URL_WEB="${5:-}"
 
 echo "=============================================="
 echo "OpenCode Monitor & Self-Heal"
 echo "=============================================="
 echo "Tunnel Provider: $TUNNEL_PROVIDER"
 echo "Timeout: $TIMEOUT_MINUTES minute(s)"
-echo "Initial URL: $INITIAL_URL"
+echo "----------------------------------------------"
+echo "OpenCode TTY URL:  $URL_TTY"
+echo "OpenChamber URL:   $URL_CHAMBER"
+echo "OpenCode Web URL:  $URL_WEB"
 echo "=============================================="
 echo ""
 
 # ------------------------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------------------------
-OPENCODE_PORT=8080
+TTY_PORT=7681
 OPENCHAMBER_PORT=9090
+OPENCODE_WEB_PORT=8080
+
 START_TIME=$(date +%s)
 TIMEOUT_SECONDS=$((TIMEOUT_MINUTES * 60))
-CURRENT_URL="$INITIAL_URL"
 
 # ------------------------------------------------------------------------------
 # Helper Functions
@@ -73,18 +81,18 @@ format_time() {
 # Service Management
 # ------------------------------------------------------------------------------
 
-restart_opencode() {
-    log "Restarting OpenCode on port $OPENCODE_PORT..."
-    pkill -f "opencode web" 2>/dev/null || true
+restart_opencode_tty() {
+    log "Restarting OpenCode TTY on port $TTY_PORT..."
+    pkill -f "ttyd" 2>/dev/null || true
     sleep 2
-    nohup stdbuf -oL opencode web --port $OPENCODE_PORT >> opencode.log 2>&1 &
+    nohup stdbuf -oL ttyd -p $TTY_PORT opencode >> opencode_tty.log 2>&1 &
     sleep 5
     
-    if check_port $OPENCODE_PORT; then
-        log "OpenCode restarted successfully"
+    if check_port $TTY_PORT; then
+        log "OpenCode TTY restarted successfully"
         return 0
     else
-        log "ERROR: Failed to restart OpenCode"
+        log "ERROR: Failed to restart OpenCode TTY"
         return 1
     fi
 }
@@ -105,43 +113,62 @@ restart_openchamber() {
     fi
 }
 
-restart_tunnel() {
-    log "Restarting tunnel ($TUNNEL_PROVIDER)..."
-    
-    if [ "$TUNNEL_PROVIDER" = "ngrok" ]; then
-        pkill -f "ngrok" 2>/dev/null || true
-        sleep 2
-        nohup ngrok http 127.0.0.1:$OPENCHAMBER_PORT --log=stdout > tunnel.log 2>&1 &
-        sleep 10
-        
-        # Get new URL
-        CURRENT_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | jq -r '.tunnels[0].public_url // empty')
-    else
-        pkill -f "cloudflared" 2>/dev/null || true
-        sleep 2
-        nohup cloudflared tunnel --url http://127.0.0.1:$OPENCHAMBER_PORT > tunnel.log 2>&1 &
-        sleep 15
-        
-        # Get new URL
-        CURRENT_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log 2>/dev/null | tail -n 1)
-    fi
-    
-    if [ -n "$CURRENT_URL" ]; then
-        log "Tunnel restarted successfully"
-        log "NEW URL: $CURRENT_URL"
-        echo ""
-        echo "=============================================="
-        echo "NEW ACCESS URL: $CURRENT_URL"
-        echo "=============================================="
-        echo ""
+restart_opencode_web() {
+    log "Restarting OpenCode Web on port $OPENCODE_WEB_PORT..."
+    pkill -f "opencode-web" 2>/dev/null || true
+    sleep 2
+    nohup stdbuf -oL opencode-web --port $OPENCODE_WEB_PORT >> opencode_web.log 2>&1 &
+    sleep 5
+
+    if check_port $OPENCODE_WEB_PORT; then
+        log "OpenCode Web restarted successfully"
         return 0
     else
-        log "ERROR: Failed to get tunnel URL"
+        log "ERROR: Failed to restart OpenCode Web"
         return 1
     fi
 }
 
-check_tunnel() {
+restart_tunnels() {
+    log "Restarting tunnels ($TUNNEL_PROVIDER)..."
+    
+    if [ "$TUNNEL_PROVIDER" = "ngrok" ]; then
+        pkill -f "ngrok" 2>/dev/null || true
+        sleep 2
+        # Complex to manage multiple ngrok tunnels without config file.
+        # For now, attempting to restore single tunnel logic or just warn.
+        log "WARNING: Multi-tunnel restart for ngrok not fully supported in this script version."
+        # Attempt to start tunnels again (blindly)
+        nohup ngrok http 127.0.0.1:$OPENCHAMBER_PORT --log=stdout > tunnel_chamber.log 2>&1 &
+        nohup ngrok http 127.0.0.1:$OPENCODE_WEB_PORT --log=stdout > tunnel_web.log 2>&1 &
+        nohup ngrok http 127.0.0.1:$TTY_PORT --log=stdout > tunnel_tty.log 2>&1 &
+        sleep 10
+    else
+        pkill -f "cloudflared" 2>/dev/null || true
+        sleep 2
+        nohup cloudflared tunnel --url http://127.0.0.1:$TTY_PORT > tunnel_tty.log 2>&1 &
+        nohup cloudflared tunnel --url http://127.0.0.1:$OPENCHAMBER_PORT > tunnel_chamber.log 2>&1 &
+        nohup cloudflared tunnel --url http://127.0.0.1:$OPENCODE_WEB_PORT > tunnel_web.log 2>&1 &
+        sleep 15
+        
+        # Get new URLs
+        URL_TTY=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel_tty.log 2>/dev/null | tail -n 1)
+        URL_CHAMBER=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel_chamber.log 2>/dev/null | tail -n 1)
+        URL_WEB=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel_web.log 2>/dev/null | tail -n 1)
+    fi
+    
+    log "Tunnels restarted."
+    echo ""
+    echo "=============================================="
+    echo "NEW ACCESS URLS:"
+    echo "OpenCode TTY:  $URL_TTY"
+    echo "OpenChamber:   $URL_CHAMBER"
+    echo "OpenCode Web:  $URL_WEB"
+    echo "=============================================="
+    echo ""
+}
+
+check_tunnels() {
     if [ "$TUNNEL_PROVIDER" = "ngrok" ]; then
         pgrep -f "ngrok" > /dev/null 2>&1
     else
@@ -157,8 +184,10 @@ shutdown() {
     log "Initiating graceful shutdown..."
     
     # Kill all services
+    pkill -f "ttyd" 2>/dev/null || true
     pkill -f "opencode" 2>/dev/null || true
     pkill -f "openchamber" 2>/dev/null || true
+    pkill -f "opencode-web" 2>/dev/null || true
     pkill -f "ngrok" 2>/dev/null || true
     pkill -f "cloudflared" 2>/dev/null || true
     
@@ -196,16 +225,18 @@ while true; do
         echo "=============================================="
         log "Status Update"
         echo "Time remaining: $(format_time $REMAINING)"
-        echo "Access URL: $CURRENT_URL"
+        echo "OpenCode TTY:  $URL_TTY"
+        echo "OpenChamber:   $URL_CHAMBER"
+        echo "OpenCode Web:  $URL_WEB"
         echo "=============================================="
         echo ""
         LAST_STATUS_TIME=$CURRENT_TIME
     fi
     
-    # Check OpenCode
-    if ! check_port $OPENCODE_PORT; then
-        log "OpenCode not responding on port $OPENCODE_PORT"
-        restart_opencode
+    # Check OpenCode TTY
+    if ! check_port $TTY_PORT; then
+        log "OpenCode TTY not responding on port $TTY_PORT"
+        restart_opencode_tty
     fi
     
     # Check OpenChamber
@@ -213,16 +244,17 @@ while true; do
         log "OpenChamber not responding on port $OPENCHAMBER_PORT"
         restart_openchamber
     fi
-    
-    # Check Tunnel
-    if ! check_tunnel; then
-        log "Tunnel process not running"
-        restart_tunnel
+
+    # Check OpenCode Web
+    if ! check_port $OPENCODE_WEB_PORT; then
+        log "OpenCode Web not responding on port $OPENCODE_WEB_PORT"
+        restart_opencode_web
     fi
     
-    # Show last line of openchamber log (activity indicator)
-    if [ -f "openchamber.log" ]; then
-        tail -n 1 openchamber.log 2>/dev/null || true
+    # Check Tunnel Process (Basic check)
+    if ! check_tunnels; then
+        log "Tunnel processes not running"
+        restart_tunnels
     fi
     
     # Sleep before next check

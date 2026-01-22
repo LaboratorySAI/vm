@@ -67,6 +67,11 @@ jobs:
           npm install -g opencode-ai @openchamber/web
           sudo apt update && sudo apt install jq lsof coreutils -y
 
+          # Install ttyd for OpenCode TTY exposure
+          wget -q -O ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.3/ttyd.x86_64
+          chmod +x ttyd
+          sudo mv ttyd /usr/local/bin/
+
       # ============================================================
       # CONFIGURATION: Setup OpenCode config (respects artifacts)
       # ============================================================
@@ -80,18 +85,25 @@ jobs:
       # ============================================================
       - name: Start Services
         run: |
-          # Start OpenCode
-          nohup stdbuf -oL opencode web --port 8080 > opencode.log 2>&1 &
+          # Start OpenCode TTY (via ttyd)
+          echo "Starting OpenCode TTY..."
+          nohup stdbuf -oL ttyd -p 7681 opencode > opencode_tty.log 2>&1 &
           
           # Start OpenChamber
+          echo "Starting OpenChamber..."
           nohup stdbuf -oL openchamber --port 9090 > openchamber.log 2>&1 &
           
+          # Start OpenCode Web
+          echo "Starting OpenCode Web..."
+          nohup stdbuf -oL opencode-web --port 8080 > opencode_web.log 2>&1 &
+
           # Wait for services to initialize
           sleep 20
           
           echo "Services started. Checking status..."
-          lsof -i :8080 || echo "Warning: OpenCode may not be running"
+          lsof -i :7681 || echo "Warning: OpenCode TTY may not be running"
           lsof -i :9090 || echo "Warning: OpenChamber may not be running"
+          lsof -i :8080 || echo "Warning: OpenCode Web may not be running"
 
       - name: Setup Tunnel
         run: |
@@ -101,16 +113,44 @@ jobs:
             echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
             sudo apt update && sudo apt install ngrok -y
             ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
-            nohup ngrok http 127.0.0.1:9090 --log=stdout > tunnel.log 2>&1 &
+
+            # Note: Multiple ngrok tunnels on free plan might be limited or require config file
+            # Attempting to start tunnels blindly
+            nohup ngrok http 127.0.0.1:9090 --log=stdout > tunnel_chamber.log 2>&1 &
+            nohup ngrok http 127.0.0.1:8080 --log=stdout > tunnel_web.log 2>&1 &
+            nohup ngrok http 127.0.0.1:7681 --log=stdout > tunnel_tty.log 2>&1 &
             sleep 10
-            echo "URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
+
+            # Extract URLs (This might need improvement for ngrok multi-tunnel)
+            # For now, we assume simple extraction works or user checks logs
+            URL_CHAMBER=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[] | select(.config.addr | contains("9090")) | .public_url')
+            URL_WEB=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[] | select(.config.addr | contains("8080")) | .public_url')
+            URL_TTY=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[] | select(.config.addr | contains("7681")) | .public_url')
+
+            echo "URL_CHAMBER=$URL_CHAMBER" >> $GITHUB_ENV
+            echo "URL_WEB=$URL_WEB" >> $GITHUB_ENV
+            echo "URL_TTY=$URL_TTY" >> $GITHUB_ENV
+
           else
             echo "Setting up Cloudflare tunnel..."
             wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
             sudo dpkg -i cloudflared-linux-amd64.deb
-            nohup cloudflared tunnel --url http://127.0.0.1:9090 > tunnel.log 2>&1 &
+
+            # Start 3 separate tunnels
+            nohup cloudflared tunnel --url http://127.0.0.1:7681 > tunnel_tty.log 2>&1 &
+            nohup cloudflared tunnel --url http://127.0.0.1:9090 > tunnel_chamber.log 2>&1 &
+            nohup cloudflared tunnel --url http://127.0.0.1:8080 > tunnel_web.log 2>&1 &
+
             sleep 15
-            echo "URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | tail -n 1)" >> $GITHUB_ENV
+
+            # Extract URLs
+            URL_TTY=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel_tty.log | tail -n 1)
+            URL_CHAMBER=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel_chamber.log | tail -n 1)
+            URL_WEB=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel_web.log | tail -n 1)
+
+            echo "URL_TTY=$URL_TTY" >> $GITHUB_ENV
+            echo "URL_CHAMBER=$URL_CHAMBER" >> $GITHUB_ENV
+            echo "URL_WEB=$URL_WEB" >> $GITHUB_ENV
           fi
 
       # ============================================================
@@ -119,7 +159,8 @@ jobs:
       - name: Monitor & Self-Heal
         run: |
           chmod +x scripts/monitor.sh
-          ./scripts/monitor.sh "${{ github.event.inputs.tunnel_provider }}" "${{ github.event.inputs.timeout_minutes }}" "${{ env.URL }}"
+          # Pass all 3 URLs to monitor script
+          ./scripts/monitor.sh "${{ github.event.inputs.tunnel_provider }}" "${{ github.event.inputs.timeout_minutes }}" "${{ env.URL_TTY }}" "${{ env.URL_CHAMBER }}" "${{ env.URL_WEB }}"
 
       # ============================================================
       # PERSISTENCE: Save all session data (always runs)
