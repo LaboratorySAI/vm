@@ -54,6 +54,11 @@ on:
         required: false
         type: string
         default: 'chrome'
+      enable_persistence:
+        description: 'Enable Browser Persistence (Windows only, requires R2 secrets)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   remote-desktop:
@@ -76,6 +81,22 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
+        shell: pwsh
+
+      - name: Restore Persistent Data (Windows)
+        if: contains(github.event.inputs.os, 'windows') && github.event.inputs.enable_persistence == 'true'
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          ./scripts/persistence-windows.ps1 -Action restore `
+            -R2AccessTokenId "$env:R2_ACCESS_KEY_ID" `
+            -R2SecretAccessKey "$env:R2_SECRET_ACCESS_KEY" `
+            -R2AccountId "$env:R2_ACCOUNT_ID" `
+            -R2Bucket "$env:R2_BUCKET" `
+            -Username "${{ github.event.inputs.username }}"
         shell: pwsh
 
       - name: Run macOS pre-install
@@ -138,3 +159,19 @@ jobs:
         if: always() && contains(github.event.inputs.os, 'windows') && github.event.inputs.tunnel_provider == 'cloudflare'
         run: taskkill /IM cloudflared.exe /F 2>nul || echo "cloudflared process not found"
         shell: bash
+
+      - name: Save Persistent Data (Windows)
+        if: always() && contains(github.event.inputs.os, 'windows') && github.event.inputs.enable_persistence == 'true'
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          ./scripts/persistence-windows.ps1 -Action save `
+            -R2AccessTokenId "$env:R2_ACCESS_KEY_ID" `
+            -R2SecretAccessKey "$env:R2_SECRET_ACCESS_KEY" `
+            -R2AccountId "$env:R2_ACCOUNT_ID" `
+            -R2Bucket "$env:R2_BUCKET" `
+            -Username "${{ github.event.inputs.username }}"
+        shell: pwsh
