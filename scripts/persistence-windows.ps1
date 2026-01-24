@@ -34,7 +34,7 @@ function Test-RequiredParams {
 $RcloneDir = "$env:ProgramFiles\rclone"
 $RcloneExe = "$RcloneDir\rclone.exe"
 $ConfigPath = "$env:TEMP\rclone.conf"
-$ChromeProfilePath = if (-not [string]::IsNullOrWhiteSpace($Username)) { "C:\Users\$Username\AppData\Local\Google\Chrome\User Data" } else { $null }
+$ChromeProfilePath = if (-not [string]::IsNullOrWhiteSpace($Username)) { "C:\Users\$Username\AppData\Local\Google\Chrome\User Data\Default" } else { $null }
 
 function Initialize-Rclone {
     if (-not (Test-Path $RcloneExe)) {
@@ -159,11 +159,11 @@ function Save-BrowserData {
     # Check if the Chrome profile exists
     if (-not (Test-Path $ChromeProfilePath)) {
         Write-Host "Chrome profile not found at $ChromeProfilePath. Nothing to save."
-        # List parent directory for debugging
-        $parentDir = Split-Path $ChromeProfilePath -Parent
-        if (Test-Path $parentDir) {
-            Write-Host "Contents of parent directory ($parentDir):"
-            Get-ChildItem -Path $parentDir -Force | ForEach-Object { Write-Host " - $($_.Name) ($($_.Attributes))" }
+        # List User Data directory to find actual profile names
+        $userDataPath = Split-Path $ChromeProfilePath -Parent
+        if (Test-Path $userDataPath) {
+            Write-Host "Contents of Chrome User Data ($userDataPath):"
+            Get-ChildItem -Path $userDataPath -Directory | ForEach-Object { Write-Host " - Profile folder: $($_.Name)" }
         }
         return
     }
