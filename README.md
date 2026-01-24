@@ -1,62 +1,89 @@
 <div align="center">
-  <img src="https://i.postimg.cc/SxLbYS2C/20250929-143416.png" width="120" height="120" style="border-radius:50%">
+  <img src="https://i.postimg.cc/SxLbYS2C/20250929-143416.png" width="120" height="120" style="border-radius:50%; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
 
-# VM with GitHub Actions
+# ⚡ Antigravity VM Suite ⚡
+**High-Performance, Persistent Virtual Machines on GitHub Actions**
 
-**Get a free, temporary Virtual Machine in the cloud, powered by GitHub Actions.**
+[![GitHub Stars](https://img.shields.io/github/stars/TheRealAshik/VM?style=for-the-badge&color=ffd700)](https://github.com/TheRealAshik/VM/stargazers)
+[![License](https://img.shields.io/github/license/TheRealAshik/VM?style=for-the-badge&color=007bff)](LICENSE)
+[![GitHub Workflows](https://img.shields.io/github/actions/workflow/status/TheRealAshik/VM/remotedesktop.yml?label=RDP%20Status&style=for-the-badge)](https://github.com/TheRealAshik/VM/actions)
 
-This project provides a simple way to get a remote desktop environment for Windows, macOS, or Ubuntu running directly from your GitHub repository. It's perfect for testing, development, or any task that requires a clean, temporary OS instance.
+---
+
+**Antigravity VM Suite** transforms GitHub Actions into a powerful workspace provider. Get a temporary, remote desktop environment for Windows, macOS, or Ubuntu in just 2 minutes—perfect for heavy development, testing, or bypass tasks.
+
+[🚀 **Deploy Now**](#-quick-start) • [📖 **Docs**](#-documentation) • [🛠️ **Features**](#-key-features)
 
 </div>
 
 ---
 
-## 🚀 Getting Started
+## ✨ Key Features
 
-Getting your own temporary VM is easy. Here's how:
+| 💻 OS Support | 🔒 Connectivity | 💾 Persistence |
+| :--- | :--- | :--- |
+| **Windows** (Latest/11-ARM) | **RDP** (Remote Desktop) | **R2 Storage** (Browser Profiles) |
+| **macOS** (Latest) | **VNC** (Screen Sharing) | **GitHub Artifacts** (Env State) |
+| **Ubuntu** (Latest) | **SSH** (Secure Shell) | **Session Restore** (Auto-pick up) |
 
-1.  **Fork this Repository**: Click the **Fork** button at the top-right of this page to create your own copy.
+- **Dual Tunneling**: Support for both `ngrok` and `cloudflared` for rock-solid stability.
+- **Audio Support**: Virtual sound card integration for Windows RDP.
+- **One-Click Setup**: Pre-install VS Code, Android Studio, GitHub Desktop, and more.
+- **Multi-Profile Sync**: Persistent Chrome profiles including accounts and extensions.
 
-2.  **Configure Secrets**:
-    - Go to your forked repository's `Settings` > `Secrets and variables` > `Actions`.
-    - Add a `USER_PASSWORD` secret. This will be the password for the user account on the VM.
-    - If you want to use `ngrok` for the tunnel, add your `NGROK_AUTH_TOKEN`.
-    - For more details on configuration, see the [Configurations Guide](docs/CONFIGURATIONS.md).
+---
 
-3.  **Run the Workflow**:
-    - Go to the **Actions** tab of your repository.
-    - Select the **Main Entrypoint** workflow.
-    - Click **Run workflow**, choose your desired OS and other options, and you're off!
+## 🚀 Quick Start
 
-4.  **Connect to Your VM**:
-    - Once the workflow is running, go to the workflow logs.
-    - Find the **Display Connection Details** step to get the address and port.
-    - Use your favorite RDP or VNC client to connect. Check out our [Installation and Use Guide](docs/INSTALLATION_AND_USE.md) for recommended clients.
+1. **Fork this Repository**: Create your private environment instance.
+2. **Configure Secrets**: Go to `Settings > Secrets > Actions` and add:
+   - `USER_PASSWORD`: Your VM login password.
+   - `NGROK_AUTH_TOKEN`: (Optional) For ngrok tunnels.
+   - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, etc. (Optional, for Browser Persistence).
+3. **Trigger Workflow**:
+   - Go to the **Actions** tab.
+   - Select **Remote Desktop Access**.
+   - Click **Run workflow** & choose your OS.
+4. **Connect**: Find the connection address in the **Display Connection Details** step of the runner logs.
 
-## ✨ Features
+---
 
-- **Multi-OS Support**: Choose from Windows, macOS, and Ubuntu.
-- **Customizable Setup**: Install common development tools like VS Code, GitHub Desktop, and even Android Studio using workflow inputs.
-- **Flexible Tunneling**: Use either `ngrok` or `cloudflare` to create a secure tunnel to your VM.
-- **OpenChamber Persistence**: Robust session saving for OpenChamber and OpenCode, preserving your chats, settings, and authentication across workflow runs.
-- **Easy to Use**: Get up and running in minutes with minimal configuration.
-- **Free**: Leverages the free tier of GitHub Actions.
+## 💾 Persistence Overview
 
-## 🖥️ VM Specifications
+We provide two distinct ways to keep your work safe:
 
-The hardware specifications for the VMs (CPU, RAM, Storage) vary depending on the operating system you choose. For a detailed breakdown, please see our [**VM Specifications Document**](docs/VM_INFO.md).
+### 1. Browser Persistence (Cloudflare R2)
+*New!* Specifically designed for high-performance syncing of Google Chrome profiles.
+- Syncs bookmarks, passwords, and **all logged-in Google accounts**.
+- Excludes bulky cache to keep startup/shutdown fast.
+- [Read the Browser Persistence Guide →](docs/BROWSER_PERSISTENCE.md)
 
-## 📚 Documentation
+### 2. OpenCode Session Persistence (Artifacts)
+Classic persistence for environment variables, chat history, and local coding configurations.
+- Saves to GitHub Artifacts (90-day retention).
+- Restores automatically on every run.
+- [Read the Persistence Technical Guide →](docs/PERSISTENCE_GUIDE.md)
 
-For more detailed information, please refer to the documents in the `/docs` directory:
+---
 
-- [**How It Works**](docs/HOW_IT_WORKS.md): A technical overview of the project.
-- [**Installation and Use**](docs/INSTALLATION_AND_USE.md): Step-by-step guide to using the workflows.
-- [**Configurations**](docs/CONFIGURATIONS.md): Detailed information on all workflow inputs and secrets.
-- [**OpenChamber Persistence**](docs/PERSISTENCE_GUIDE.md): Technical details on how session data is saved and restored.
-- [**Pre-installed Software**](docs/PRE_INSTALLED_SOFTWARE.md): A list of all available optional software.
-- [**SSH Termius Guide**](docs/SSH_TERMIUS_GUIDE.md): How to connect via SSH using Termius.
-- [**Disclaimer**](docs/DISCLAIMER.md): Important limitations and usage guidelines.
+## 🖥️ Documentation Portal
 
-> [!WARNING]
-> The macOS and Ubuntu workflows are not actively maintained and may be unstable. For the best experience, we recommend using the Windows runners.
+Explore our detailed guides to master your environment:
+
+- **[Installation Guide](docs/INSTALLATION_AND_USE.md)**: Recommended clients for RDP and VNC.
+- **[Configuration Matrix](docs/CONFIGURATIONS.md)**: Every toggle, input, and secret explained.
+- **[VM Specifications](docs/VM_INFO.md)**: CPU, RAM, and Storage breakdown for each runner.
+- **[Software Catalog](docs/PRE_INSTALLED_SOFTWARE.md)**: List of all optional software you can auto-install.
+- **[SSH & Termius](docs/SSH_TERMIUS_GUIDE.md)**: Setting up secure terminal-only access.
+- **[Technical Breakdown](docs/HOW_IT_WORKS.md)**: How we use Rclone, Ngrok, and PowerShell to automate the cloud.
+
+---
+
+<div align="center">
+
+### ⚠️ Disclaimer
+*This project is for educational and development purposes. Please adhere to the [GitHub Actions Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service). The macOS and Ubuntu workflows are community-maintained.*
+
+[docs/DISCLAIMER.md](docs/DISCLAIMER.md)
+
+</div>
