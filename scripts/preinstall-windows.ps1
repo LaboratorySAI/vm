@@ -114,4 +114,28 @@ try {
     Write-Error "Failed to enable Remote Desktop: $_"
 }
 
+# 5. Global Git Configuration
+Write-Host "Step 5: Configuring Git globally..."
+try {
+    $GitExe = "C:\Program Files\Git\bin\git.exe"
+    if (Test-Path $GitExe) {
+        Write-Host "Setting global Git identity and preferences..."
+        & $GitExe config --global user.name "$Username"
+        & $GitExe config --global user.email "$Username@localhost"
+        & $GitExe config --global core.autocrlf input
+        & $GitExe config --global init.defaultBranch main
+        
+        # Add current directory and common workspace paths as safe directories
+        $WorkspacePath = Get-Location
+        & $GitExe config --global --add safe.directory "$WorkspacePath"
+        & $GitExe config --global --add safe.directory "D:/a/VM/VM"
+        
+        Write-Host "Git global configuration complete."
+    } else {
+        Write-Warning "Git executable not found at $GitExe. Skipping Git configuration."
+    }
+} catch {
+    Write-Error "Failed to configure Git: $_"
+}
+
 Write-Host "Windows pre-install steps completed."

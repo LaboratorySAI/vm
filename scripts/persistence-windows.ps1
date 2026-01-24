@@ -15,10 +15,26 @@ param (
     [string]$Username
 )
 
+# Validate required parameters for R2 operations
+function Test-RequiredParams {
+    $missingParams = @()
+    if ([string]::IsNullOrWhiteSpace($R2AccessTokenId)) { $missingParams += "R2AccessTokenId" }
+    if ([string]::IsNullOrWhiteSpace($R2SecretAccessKey)) { $missingParams += "R2SecretAccessKey" }
+    if ([string]::IsNullOrWhiteSpace($R2AccountId)) { $missingParams += "R2AccountId" }
+    if ([string]::IsNullOrWhiteSpace($R2Bucket)) { $missingParams += "R2Bucket" }
+    if ([string]::IsNullOrWhiteSpace($Username)) { $missingParams += "Username" }
+    
+    if ($missingParams.Count -gt 0) {
+        Write-Warning "Missing required parameters: $($missingParams -join ', '). Skipping persistence action."
+        return $false
+    }
+    return $true
+}
+
 $RcloneDir = "$env:ProgramFiles\rclone"
 $RcloneExe = "$RcloneDir\rclone.exe"
 $ConfigPath = "$env:TEMP\rclone.conf"
-$ChromeProfilePath = "C:\Users\$Username\AppData\Local\Google\Chrome\User Data"
+$ChromeProfilePath = if (-not [string]::IsNullOrWhiteSpace($Username)) { "C:\Users\$Username\AppData\Local\Google\Chrome\User Data" } else { $null }
 
 function Setup-Rclone {
     if (-not (Test-Path $RcloneExe)) {
@@ -28,9 +44,12 @@ function Setup-Rclone {
         Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile $zipPath
         Expand-Archive -Path $zipPath -DestinationPath "$env:TEMP\rclone-temp" -Force
         $tempExe = Get-ChildItem -Path "$env:TEMP\rclone-temp" -Filter "rclone.exe" -Recurse | Select-Object -First 1
+        if ($null -eq $tempExe) {
+            throw "Failed to find rclone.exe in downloaded archive"
+        }
         Move-Item -Path $tempExe.FullName -Destination $RcloneExe -Force
-        Remove-Item -Path $zipPath -Force
-        Remove-Item -Path "$env:TEMP\rclone-temp" -Recurse -Force
+        Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$env:TEMP\rclone-temp" -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     $configContent = @"
@@ -47,8 +66,19 @@ acl = private
 
 function Restore-BrowserData {
     Write-Host "Restoring browser data from R2..."
+    
+    if ([string]::IsNullOrWhiteSpace($ChromeProfilePath)) {
+        Write-Warning "Chrome profile path is not set. Skipping restore."
+        return
+    }
+    
     if (-not (Test-Path $ChromeProfilePath)) {
         New-Item -ItemType Directory -Force -Path $ChromeProfilePath | Out-Null
+    }
+    
+    if (-not (Test-Path $RcloneExe)) {
+        Write-Warning "rclone executable not found at $RcloneExe. Skipping restore."
+        return
     }
     
     # Sync from R2 to local, excluding lock files
@@ -67,9 +97,19 @@ function Save-BrowserData {
     Stop-Process -Name "chrome" -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 3
 
+    if ([string]::IsNullOrWhiteSpace($ChromeProfilePath)) {
+        Write-Warning "Chrome profile path is not set. Skipping save."
+        return
+    }
+
     # Check if the Chrome profile exists
     if (-not (Test-Path $ChromeProfilePath)) {
         Write-Host "Chrome profile not found at $ChromeProfilePath. Nothing to save."
+        return
+    }
+    
+    if (-not (Test-Path $RcloneExe)) {
+        Write-Warning "rclone executable not found at $RcloneExe. Skipping save."
         return
     }
 
@@ -90,6 +130,12 @@ function Save-BrowserData {
 
 # Execution
 try {
+    # Validate parameters before proceeding
+    if (-not (Test-RequiredParams)) {
+        Write-Host "Persistence action skipped due to missing parameters."
+        exit 0
+    }
+    
     Setup-Rclone
     if ($Action -eq "restore") {
         Restore-BrowserData
@@ -100,7 +146,7 @@ try {
     Write-Error "Persistence action failed: $_"
     exit 1
 } finally {
-    if (Test-Path $ConfigPath) {
-        Remove-Item -Path $ConfigPath -Force
+    if ((Test-Path variable:ConfigPath) -and $ConfigPath -and (Test-Path $ConfigPath)) {
+        Remove-Item -Path $ConfigPath -Force -ErrorAction SilentlyContinue
     }
 }
