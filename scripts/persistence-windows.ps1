@@ -159,8 +159,18 @@ function Save-BrowserData {
     # Check if the Chrome profile exists
     if (-not (Test-Path $ChromeProfilePath)) {
         Write-Host "Chrome profile not found at $ChromeProfilePath. Nothing to save."
+        # List parent directory for debugging
+        $parentDir = Split-Path $ChromeProfilePath -Parent
+        if (Test-Path $parentDir) {
+            Write-Host "Contents of parent directory ($parentDir):"
+            Get-ChildItem -Path $parentDir -Force | ForEach-Object { Write-Host " - $($_.Name) ($($_.Attributes))" }
+        }
         return
     }
+
+    # Debug: List profile contents
+    Write-Host "Listing contents of $ChromeProfilePath (top level):"
+    Get-ChildItem -Path $ChromeProfilePath -Force | ForEach-Object { Write-Host " - $($_.Name)" }
     
     if (-not (Test-Path $RcloneExe)) {
         Write-Warning "rclone executable not found at $RcloneExe. Skipping save."
@@ -171,14 +181,14 @@ function Save-BrowserData {
     try {
         & $RcloneExe sync "$ChromeProfilePath" "r2:$R2Bucket/profiles/$Username/Chrome" `
             --config $ConfigPath `
-            --progress `
+            --verbose `
             --links `
-            --exclude "lockfile" `
+            --exclude "Lock" `
             --exclude "SingletonLock" `
             --exclude "*.lock" `
-            --exclude "Cache/**" `
-            --exclude "Code Cache/**" `
-            --exclude "GPUCache/**" `
+            --exclude "**/Cache/**" `
+            --exclude "**/Code Cache/**" `
+            --exclude "**/GPUCache/**" `
             --ignore-errors
         Write-Host "Save complete."
     }
