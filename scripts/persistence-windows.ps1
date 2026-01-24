@@ -39,17 +39,62 @@ $ChromeProfilePath = if (-not [string]::IsNullOrWhiteSpace($Username)) { "C:\Use
 function Initialize-Rclone {
     if (-not (Test-Path $RcloneExe)) {
         Write-Host "Installing rclone..."
-        New-Item -ItemType Directory -Force -Path $RcloneDir | Out-Null
+        
+        # Ensure directory exists
+        if (-not (Test-Path $RcloneDir)) {
+            New-Item -ItemType Directory -Force -Path $RcloneDir | Out-Null
+        }
+        
         $zipPath = "$env:TEMP\rclone.zip"
-        Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile $zipPath
-        Expand-Archive -Path $zipPath -DestinationPath "$env:TEMP\rclone-temp" -Force
-        $tempExe = Get-ChildItem -Path "$env:TEMP\rclone-temp" -Filter "rclone.exe" -Recurse | Select-Object -First 1
-        if ($null -eq $tempExe) {
+        $tempExtractPath = "$env:TEMP\rclone-temp"
+        
+        # Clean up any previous temp files
+        if (Test-Path $tempExtractPath) {
+            Remove-Item -Path $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        
+        Write-Host "Downloading rclone..."
+        Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile $zipPath -UseBasicParsing
+        
+        if (-not (Test-Path $zipPath)) {
+            throw "Failed to download rclone archive"
+        }
+        
+        Write-Host "Extracting rclone..."
+        Expand-Archive -Path $zipPath -DestinationPath $tempExtractPath -Force
+        
+        # Find rclone.exe with explicit null handling
+        $tempExeList = @(Get-ChildItem -Path $tempExtractPath -Filter "rclone.exe" -Recurse -ErrorAction SilentlyContinue)
+        
+        if ($null -eq $tempExeList -or $tempExeList.Count -eq 0) {
+            # List contents for debugging
+            Write-Host "Contents of extract directory:"
+            Get-ChildItem -Path $tempExtractPath -Recurse | ForEach-Object { Write-Host $_.FullName }
             throw "Failed to find rclone.exe in downloaded archive"
         }
-        Move-Item -Path $tempExe.FullName -Destination $RcloneExe -Force
+        
+        $tempExe = $tempExeList[0]
+        $tempExeFullName = $tempExe.FullName
+        
+        if ([string]::IsNullOrWhiteSpace($tempExeFullName)) {
+            throw "rclone.exe path is null or empty"
+        }
+        
+        Write-Host "Moving rclone.exe from $tempExeFullName to $RcloneExe"
+        Move-Item -Path $tempExeFullName -Destination $RcloneExe -Force
+        
+        # Cleanup
         Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "$env:TEMP\rclone-temp" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue
+        
+        Write-Host "rclone installation complete."
+    }
+
+    # Validate parameters before creating config
+    if ([string]::IsNullOrWhiteSpace($R2AccessTokenId) -or 
+        [string]::IsNullOrWhiteSpace($R2SecretAccessKey) -or 
+        [string]::IsNullOrWhiteSpace($R2AccountId)) {
+        throw "R2 credentials are not properly set"
     }
 
     $configContent = @"
