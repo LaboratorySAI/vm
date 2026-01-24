@@ -63,7 +63,7 @@ on:
 jobs:
   remote-desktop:
     runs-on: ${{ github.event.inputs.os }}
-    timeout-minutes: ${{ fromJSON(github.event.inputs.timeout) }}
+    timeout-minutes: 360
 
     steps:
       - name: Checkout Code

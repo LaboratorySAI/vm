@@ -4,7 +4,7 @@
 #>
 
 param (
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory = $true)]
     [ValidateSet("restore", "save")]
     [string]$Action,
 
@@ -36,7 +36,7 @@ $RcloneExe = "$RcloneDir\rclone.exe"
 $ConfigPath = "$env:TEMP\rclone.conf"
 $ChromeProfilePath = if (-not [string]::IsNullOrWhiteSpace($Username)) { "C:\Users\$Username\AppData\Local\Google\Chrome\User Data" } else { $null }
 
-function Setup-Rclone {
+function Initialize-Rclone {
     if (-not (Test-Path $RcloneExe)) {
         Write-Host "Installing rclone..."
         New-Item -ItemType Directory -Force -Path $RcloneDir | Out-Null
@@ -94,10 +94,19 @@ function Save-BrowserData {
     Write-Host "Saving browser data to R2..."
     
     # Close Chrome if it's running
-    Stop-Process -Name "chrome" -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
+    try {
+        $chromeProcesses = Get-Process -Name "chrome" -ErrorAction SilentlyContinue
+        if ($chromeProcesses) {
+            Write-Host "Closing Chrome processes..."
+            $chromeProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+        }
+    }
+    catch {
+        Write-Warning "Note: Issue while stopping Chrome: $_"
+    }
 
-    if ([string]::IsNullOrWhiteSpace($ChromeProfilePath)) {
+    if ($null -eq $ChromeProfilePath -or [string]::IsNullOrWhiteSpace($ChromeProfilePath)) {
         Write-Warning "Chrome profile path is not set. Skipping save."
         return
     }
@@ -114,18 +123,23 @@ function Save-BrowserData {
     }
 
     # Sync from local to R2, excluding lock files and cache
-    & $RcloneExe sync "$ChromeProfilePath" "r2:$R2Bucket/profiles/$Username/Chrome" `
-        --config $ConfigPath `
-        --progress `
-        --links `
-        --exclude "lockfile" `
-        --exclude "SingletonLock" `
-        --exclude "*.lock" `
-        --exclude "Cache/**" `
-        --exclude "Code Cache/**" `
-        --exclude "GPUCache/**" `
-        --ignore-errors
-    Write-Host "Save complete."
+    try {
+        & $RcloneExe sync "$ChromeProfilePath" "r2:$R2Bucket/profiles/$Username/Chrome" `
+            --config $ConfigPath `
+            --progress `
+            --links `
+            --exclude "lockfile" `
+            --exclude "SingletonLock" `
+            --exclude "*.lock" `
+            --exclude "Cache/**" `
+            --exclude "Code Cache/**" `
+            --exclude "GPUCache/**" `
+            --ignore-errors
+        Write-Host "Save complete."
+    }
+    catch {
+        throw "Rclone sync failed: $_"
+    }
 }
 
 # Execution
@@ -136,16 +150,22 @@ try {
         exit 0
     }
     
-    Setup-Rclone
+    Initialize-Rclone
     if ($Action -eq "restore") {
         Restore-BrowserData
-    } elseif ($Action -eq "save") {
+    }
+    elseif ($Action -eq "save") {
         Save-BrowserData
     }
-} catch {
-    Write-Error "Persistence action failed: $_"
+}
+catch {
+    $errorMessage = $_.Exception.Message
+    if ($null -eq $errorMessage) { $errorMessage = $_.ToString() }
+    Write-Error "Persistence action failed: $errorMessage"
+    Write-Debug "Stack Trace: $($_.ScriptStackTrace)"
     exit 1
-} finally {
+}
+finally {
     if ((Test-Path variable:ConfigPath) -and $ConfigPath -and (Test-Path $ConfigPath)) {
         Remove-Item -Path $ConfigPath -Force -ErrorAction SilentlyContinue
     }
